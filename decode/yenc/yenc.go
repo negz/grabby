@@ -166,14 +166,12 @@ func parseTrailer(b []byte) (*Trailer, error) {
 func (d *Decoder) verifyCRC32s() error {
     switch {
     case d.Trailer.PartCRC32 != "":
-        actual := util.StringCRCSum(d.crc.Sum32())
-        if d.Trailer.PartCRC32 != actual {
-            return DecodeError(fmt.Sprintf("Invalid part checksum. Got %v, wanted %v.", d.Trailer.PartCRC32, actual))
+        if !util.ValidCRCString(d.crc.Sum32())[d.Trailer.PartCRC32] {
+            return DecodeError(fmt.Sprintf("Invalid part checksum. Got %v, wanted %x.", d.Trailer.PartCRC32, d.crc.Sum32()))
         }
     case d.Trailer.CRC32 != "":
-        actual := util.StringCRCSum(d.crc.Sum32())
-        if d.Trailer.CRC32 != actual {
-            return DecodeError(fmt.Sprintf("Invalid checksum. Got %v, wanted %v.", d.Trailer.CRC32, actual))
+        if !util.ValidCRCString(d.crc.Sum32())[d.Trailer.CRC32] {
+            return DecodeError(fmt.Sprintf("Invalid checksum. Got %v, wanted %x.", d.Trailer.CRC32, d.crc.Sum32()))
         }
     }
     return nil

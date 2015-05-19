@@ -29,6 +29,13 @@ func HashString(s string) string {
     return HashBytes([]byte(s))
 }
 
-func StringCRCSum(c uint32) string {
-    return strconv.FormatUint(uint64(c), 16)
+// ValidCRCString handles the fact that yEnc is terribad and doesn't actually
+// specify how to present the CRC32 sum in the trailer.
+func ValidCRCString(c uint32) map[string]bool {
+    return map[string]bool{
+        fmt.Sprintf("%x", c):   true,
+        fmt.Sprintf("%X", c):   true,
+        fmt.Sprintf("%08x", c): true,
+        fmt.Sprintf("%08X", c): true,
+    }
 }
