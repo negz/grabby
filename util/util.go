@@ -7,6 +7,7 @@ import (
 	"strconv"
 )
 
+// PasswordFromFile reads a password from a file.
 func PasswordFromFile(f string) (string, error) {
 	password, err := ioutil.ReadFile(f)
 	if err != nil {
@@ -15,16 +16,19 @@ func PasswordFromFile(f string) (string, error) {
 	return string(password), nil
 }
 
+// FormatArticleID returns supplied ID id wrapped with <>
 func FormatArticleID(id string) string {
 	return fmt.Sprintf("<%s>", id)
 }
 
+// HashBytes returns the FNV-1a 64 bit hex hash for the supplied byte array.
 func HashBytes(b []byte) string {
 	h := fnv.New64a()
 	h.Write(b)
 	return strconv.FormatUint(h.Sum64(), 16)
 }
 
+// HashString returns the FNV-1a 64 bit hex hash for the supplied string.
 func HashString(s string) string {
 	return HashBytes([]byte(s))
 }

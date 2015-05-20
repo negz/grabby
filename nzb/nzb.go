@@ -13,7 +13,8 @@ import (
 	"github.com/negz/xmlstream"
 )
 
-// Segment represents a segment of a file posted to Usenet and represented in an NZB
+// A Segment represents a segment of a file posted to Usenet and represented in
+// an NZB.
 type Segment struct {
 	XMLName   xml.Name `xml:"segment"`
 	Bytes     uint64   `xml:"bytes,attr"`
@@ -25,7 +26,7 @@ func (s *Segment) String() string {
 	return fmt.Sprintf("%v (segment %v, %v bytes)", s.ArticleID, s.Number, s.Bytes)
 }
 
-// File represents a file posted to Usenet and represented in an NZB
+// A File represents a file posted to Usenet and represented in an NZB.
 type File struct {
 	XMLName  xml.Name   `xml:"file"`
 	Poster   string     `xml:"poster,attr"`
@@ -39,7 +40,7 @@ func (f *File) String() string {
 	return fmt.Sprintf("%v (%v segments in %v groups)", f.Subject, len(f.Segments), len(f.Groups))
 }
 
-// Metadata represents an element of metadata in an NZB
+// Metadata represents an element of metadata in an NZB.
 type Metadata struct {
 	XMLName xml.Name `xml:"meta"`
 	Type    string   `xml:"type,attr"`
@@ -50,7 +51,7 @@ func (m *Metadata) String() string {
 	return fmt.Sprintf("%v:%v", m.Type, m.Value)
 }
 
-// NZB is a representation of an NZB file
+// An NZB is a representation of an NZB file.
 type NZB struct {
 	Filename string // For renaming output files with munged named.
 	Metadata []*Metadata

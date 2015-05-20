@@ -1,7 +1,9 @@
-// Package yenc implements yEnc 1.3 decoding.
-// Note that while it is multipart aware it doesn't handle assembling parts,
-// or their relation to each other in general. This is expected to be handled
-// by an NZB file.
+/*
+Package yenc implements yEnc 1.3 decoding.
+Note that while it is multipart aware it doesn't handle assembling parts, or
+their relation to each other in general. This is expected to be handled by an
+NZB file.
+*/
 package yenc
 
 import (
@@ -15,17 +17,18 @@ import (
 	"github.com/negz/grabby/util"
 )
 
-// maxHeaderBuffer specifies how many bytes we should read before giving up on receiving a yEnc header.
+// maxHeaderBuffer specifies how many bytes we should read before giving up on
+// receiving a yEnc header.
 const maxHeaderBuffer int = 1024
 
-// DecodeError records an error decoding yEnc encoded data.
+// A DecodeError records an error decoding yEnc encoded data.
 type DecodeError string
 
 func (err DecodeError) Error() string {
 	return string(err)
 }
 
-// Header represents a yEnc header.
+// A Header represents a yEnc header.
 type Header struct {
 	Multipart bool
 	Part      int // All int because they're derived from strconv.Atoi()
@@ -35,20 +38,20 @@ type Header struct {
 	Name      string
 }
 
-// PartHeader represents a yEnc part header for multipart binaries.
+// A PartHeader represents a yEnc part header for multipart binaries.
 type PartHeader struct {
 	Begin int
 	End   int
 }
 
-// Trailer represents a yEnc part trailer.
+// A Trailer represents a yEnc part trailer.
 type Trailer struct {
 	Size      int
 	CRC32     string
 	PartCRC32 string
 }
 
-// Decoder wraps an io.Writer, decoding yEnc as it writes.
+// A Decoder wraps an io.Writer, decoding yEnc as it writes.
 // A decoder handles exactly one yEnc file (or one part of a multipart file).
 type Decoder struct {
 	w                  io.Writer
@@ -75,7 +78,8 @@ func NewDecoder(w io.Writer) *Decoder {
 	return d
 }
 
-// headerStringToMap converts a yEnc header (or trailer) to a string map of key value pairs
+// headerStringToMap converts a yEnc header (or trailer) to a string map of key
+// value pairs.
 func headerBytesToMap(h []byte) (map[string]string, error) {
 	m := make(map[string]string)
 
@@ -162,8 +166,8 @@ func parseTrailer(b []byte) (*Trailer, error) {
 }
 
 // verifyCRC32s verifies any CRC32s found in the trailer.
-// Note that if a pcrc32 (i.e. the CRC32 of this part) is present we ignore crc32
-// as we don't care about the file's larger context.
+// Note that if a pcrc32 (i.e. the CRC32 of this part) is present we ignore
+// crc32  as we don't care about the file's larger context.
 func (d *Decoder) verifyCRC32s() error {
 	switch {
 	case d.Trailer.PartCRC32 != "":
@@ -178,8 +182,8 @@ func (d *Decoder) verifyCRC32s() error {
 	return nil
 }
 
-// decodeLine decodes a single line of yEnc data, writing it to the output writer.
-// Output is also written to the CRC32 hash for future verification.
+// decodeLine decodes a single line of yEnc data, writing it to the output
+// writer. Output is also written to the CRC32 hash for future verification.
 func (d *Decoder) decodeLine(line []byte) error {
 	// TODO(negz): It would be nice to reuse the input line, but we don't write
 	// the '=' control character out and I'm too lazy to handle that.
@@ -268,6 +272,7 @@ func (d *Decoder) decode() error {
 	return nil
 }
 
+// Write wraps the Write() of the embedded io.Writer, decoding along the way.
 func (d *Decoder) Write(p []byte) (int, error) {
 	d.b.Write(p)
 	if err := d.decode(); err != nil {

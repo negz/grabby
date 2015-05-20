@@ -1,5 +1,8 @@
-// Package nntp implements functions for interfacing with an NNTP server.
-// It is designed to handle multiple sessions, and has a focus on downloading binary files.
+/*
+Package nntp implements functions for interfacing with an NNTP server.
+It is designed to handle multiple sessions, and has a focus on downloading
+binary files.
+*/
 package nntp
 
 import (
@@ -12,14 +15,14 @@ import (
 	"github.com/willglynn/nntp"
 )
 
-// SessionError records an error handling a server's sessions.
+// A SessionError records an error handling a server's sessions.
 type SessionError string
 
 func (err SessionError) Error() string {
 	return string(err)
 }
 
-// Session represents a single connection to a usenet server.
+// A Session represents a single connection to a usenet server.
 type Session struct {
 	Server       *Server
 	CurrentGroup string
@@ -69,7 +72,7 @@ func (s *Session) busy() {
 	s.Busy = true
 }
 
-// idle marks a session as idle
+// idle marks a session as idle.
 func (s *Session) idle() {
 	s.Server.sessionMutex.Lock()
 	defer s.Server.sessionMutex.Unlock()
@@ -101,7 +104,8 @@ func (s *Session) selectGroup(g string) error {
 	return nil
 }
 
-// getArticleBody returns an io.Reader for the body of article id (without <>) in the current group
+// getArticleBody returns an io.Reader for the body of article id (without <>)
+// in the current group.
 func (s *Session) getArticleBody(id string) (io.Reader, error) {
 	body, err := s.conn.Body(util.FormatArticleID(id))
 	if err != nil {
@@ -110,7 +114,7 @@ func (s *Session) getArticleBody(id string) (io.Reader, error) {
 	return body, nil
 }
 
-// Server represents a usenet server, which may have many sessions.
+// A Server represents a usenet server, which may have many sessions.
 type Server struct {
 	Hostname        string
 	Port            int
@@ -125,7 +129,7 @@ type Server struct {
 	isDisconnecting bool
 }
 
-// NewServer creates and a initialises a new Server
+// NewServer creates and a initialises a new Server.
 func NewServer(hostname string, port int, useTLS bool, username, password string, maxSessions int) *Server {
 	return &Server{
 		Hostname:     hostname,
@@ -141,17 +145,17 @@ func NewServer(hostname string, port int, useTLS bool, username, password string
 	}
 }
 
-// String returns the server as a hostname:port string
+// String returns the server as a hostname:port string.
 func (s *Server) String() string {
 	return fmt.Sprintf("%v:%v", s.Hostname, s.Port)
 }
 
-// Disconnect terminates all sessions to the server
+// Disconnect terminates all sessions to the server.
 func (s *Server) Disconnect() {
 	s.isDisconnecting = true
 	defer func() { s.isDisconnecting = false }()
 
-	// TODO(negz): Probably too broad - i.e. will prevent busy sessions becoming idle
+	// TODO(negz): Too broad - i.e. will prevent busy sessions becoming idle
 	s.sessionMutex.Lock()
 	defer s.sessionMutex.Unlock()
 
@@ -167,7 +171,7 @@ func (s *Server) Disconnect() {
 	}
 }
 
-// newSession returns a new *Session to the server
+// newSession returns a new *Session to the server.
 func (s *Server) newSession() (*Session, error) {
 	session := &Session{Server: s}
 	if err := session.dial(); err != nil {
@@ -203,21 +207,24 @@ func (s *Server) getSession() (*Session, error) {
 	return session, nil
 }
 
-// ArticleRequest specifies an article to download by its Group and ID (without <>s).
+// An ArticleRequest specifies an article to download by its Group and ID
+// (without <>s).
 type ArticleRequest struct {
 	Group   string
 	ID      string
 	WriteTo io.Writer
 }
 
-// ArticleResponse contains the response to an ArticleRequest - either an io.Reader or an error.
+// An ArticleResponse contains the response to an ArticleRequest - either an
+// io.Reader or an error.
 type ArticleResponse struct {
 	*ArticleRequest
 	Bytes int64
 	Error error
 }
 
-// writeArticleBody writes the requested article's body to the supplied io.Writer
+// writeArticleBody writes the requested article's body to the supplied
+// io.Writer.
 func (s *Server) writeArticleBody(group, id string, w io.Writer) (int64, error) {
 	session, err := s.getSession()
 	if err != nil {
