@@ -80,12 +80,12 @@ func headerBytesToMap(h []byte) (map[string]string, error) {
 	m := make(map[string]string)
 
 	if bytes.IndexByte(h, ' ') == -1 {
-		return m, DecodeError(fmt.Sprintf("Malformed yEnc header: %v", h))
+		return m, DecodeError(fmt.Sprintf("malformed yEnc header: %v", h))
 	}
 
 	for _, element := range bytes.Split(h, []byte(" ")) {
 		if bytes.IndexByte(element, '=') == -1 {
-			return m, DecodeError(fmt.Sprintf("Malformed yEnc header: %v", h))
+			return m, DecodeError(fmt.Sprintf("malformed yEnc header: %v", h))
 		}
 
 		kv := bytes.SplitN(element, []byte("="), 2)
@@ -105,10 +105,10 @@ func parseHeader(b []byte) (*Header, error) {
 	header := &Header{Name: headerMap["name"]}
 
 	if header.Line, err = strconv.Atoi(headerMap["line"]); err != nil {
-		return nil, DecodeError(fmt.Sprintf("Malformed yEnc header: %v", string(b)))
+		return nil, DecodeError(fmt.Sprintf("malformed yEnc header: %v", string(b)))
 	}
 	if header.Size, err = strconv.Atoi(headerMap["size"]); err != nil {
-		return nil, DecodeError(fmt.Sprintf("Malformed yEnc header: %v", string(b)))
+		return nil, DecodeError(fmt.Sprintf("malformed yEnc header: %v", string(b)))
 	}
 
 	// There's nothing more to do if we're not a multipart header
@@ -116,7 +116,7 @@ func parseHeader(b []byte) (*Header, error) {
 		return header, nil
 	}
 	if header.Part, err = strconv.Atoi(headerMap["part"]); err != nil {
-		return nil, DecodeError(fmt.Sprintf("Malformed yEnc header: %v", string(b)))
+		return nil, DecodeError(fmt.Sprintf("malformed yEnc header: %v", string(b)))
 	}
 
 	header.Multipart = true
@@ -126,7 +126,7 @@ func parseHeader(b []byte) (*Header, error) {
 		return header, nil
 	}
 	if header.Total, err = strconv.Atoi(headerMap["total"]); err != nil {
-		return nil, DecodeError(fmt.Sprintf("Malformed yEnc header: %v", string(b)))
+		return nil, DecodeError(fmt.Sprintf("malformed yEnc header: %v", string(b)))
 	}
 
 	return header, nil
@@ -137,10 +137,10 @@ func parsePartHeader(b []byte) (*PartHeader, error) {
 	headerMap, err := headerBytesToMap(b)
 	header := &PartHeader{}
 	if header.Begin, err = strconv.Atoi(headerMap["begin"]); err != nil {
-		return nil, DecodeError(fmt.Sprintf("Malformed yEnc part header: %v", string(b)))
+		return nil, DecodeError(fmt.Sprintf("malformed yEnc part header: %v", string(b)))
 	}
 	if header.End, err = strconv.Atoi(headerMap["end"]); err != nil {
-		return nil, DecodeError(fmt.Sprintf("Malformed yEnc part header: %v", string(b)))
+		return nil, DecodeError(fmt.Sprintf("malformed yEnc part header: %v", string(b)))
 	}
 
 	return header, nil
@@ -151,7 +151,7 @@ func parseTrailer(b []byte) (*Trailer, error) {
 	trailerMap, err := headerBytesToMap(b)
 	trailer := &Trailer{}
 	if trailer.Size, err = strconv.Atoi(trailerMap["size"]); err != nil {
-		return nil, DecodeError(fmt.Sprintf("Malformed yEnc part trailer: %v", string(b)))
+		return nil, DecodeError(fmt.Sprintf("malformed yEnc part trailer: %v", string(b)))
 	}
 
 	// CRCs are optional
@@ -168,11 +168,11 @@ func (d *Decoder) verifyCRC32s() error {
 	switch {
 	case d.Trailer.PartCRC32 != "":
 		if !util.ValidCRCString(d.crc.Sum32())[d.Trailer.PartCRC32] {
-			return DecodeError(fmt.Sprintf("Invalid part checksum. Got %v, wanted %x.", d.Trailer.PartCRC32, d.crc.Sum32()))
+			return DecodeError(fmt.Sprintf("invalid part checksum %v - wanted %x", d.Trailer.PartCRC32, d.crc.Sum32()))
 		}
 	case d.Trailer.CRC32 != "":
 		if !util.ValidCRCString(d.crc.Sum32())[d.Trailer.CRC32] {
-			return DecodeError(fmt.Sprintf("Invalid checksum. Got %v, wanted %x.", d.Trailer.CRC32, d.crc.Sum32()))
+			return DecodeError(fmt.Sprintf("invalid checksum %v - wanted %x", d.Trailer.CRC32, d.crc.Sum32()))
 		}
 	}
 	return nil
@@ -208,7 +208,7 @@ func (d *Decoder) decodeLine(line []byte) error {
 func (d *Decoder) decode() error {
 	for d.Header == nil {
 		if d.bytesBeforeHeader >= maxHeaderBuffer {
-			return DecodeError(fmt.Sprintf("No yEnc header found in first %v bytes", maxHeaderBuffer))
+			return DecodeError(fmt.Sprintf("no yEnc header found in first %v bytes", maxHeaderBuffer))
 		}
 		if bytes.IndexByte(d.b.Bytes(), '\n') == -1 {
 			return nil
@@ -236,7 +236,7 @@ func (d *Decoder) decode() error {
 			return err
 		}
 		if string(line[:7]) != "=ypart " {
-			return DecodeError("No yEnc part header immediately followed multipart header")
+			return DecodeError("no yEnc part header immediately followed multipart header")
 		}
 		line = bytes.TrimRight(line, "\r\n")
 		if d.PartHeader, err = parsePartHeader(line); err != nil {

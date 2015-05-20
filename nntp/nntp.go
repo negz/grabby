@@ -32,7 +32,7 @@ type Session struct {
 // dial connects, authenticates, and attempts to enable compression.
 func (s *Session) dial() error {
 	if s.Connected {
-		return SessionError("Session is already connected.")
+		return SessionError("session is already connected")
 	}
 
 	var conn *nntp.Conn
@@ -179,7 +179,7 @@ func (s *Server) newSession() (*Session, error) {
 // getSession returns a *Session to download... stuff with.
 func (s *Server) getSession() (*Session, error) {
 	if s.isDisconnecting {
-		return nil, SessionError(fmt.Sprintf("Server %v is currently disconnecting.", s))
+		return nil, SessionError(fmt.Sprintf("server %v is currently disconnecting", s))
 	}
 
 	s.sessionMutex.Lock()
@@ -192,7 +192,7 @@ func (s *Server) getSession() (*Session, error) {
 
 	// We know there's no idle sessions, and we're at max busy sessions.
 	if len(s.busy) == s.MaxSessions {
-		return nil, SessionError(fmt.Sprintf("Server %v has no available sessions.", s))
+		return nil, SessionError(fmt.Sprintf("server %v has no available sessions", s))
 	}
 
 	// We know there's no idle sessions, and we're under max busy sessions.
