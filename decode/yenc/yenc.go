@@ -7,11 +7,12 @@ package yenc
 import (
 	"bytes"
 	"fmt"
-	"github.com/negz/grabby/util"
 	"hash"
 	"hash/crc32"
 	"io"
 	"strconv"
+
+	"github.com/negz/grabby/util"
 )
 
 // maxHeaderBuffer specifies how many bytes we should read before giving up on receiving a yEnc header.

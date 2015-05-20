@@ -2,14 +2,15 @@
 package nzb
 
 import (
-	"code.google.com/p/go-charset/charset"
-	_ "code.google.com/p/go-charset/data" // NZBs often use iso-8859-1
 	"encoding/xml"
 	"fmt"
-	"github.com/negz/xmlstream"
 	"io"
 	"os"
 	"path/filepath"
+
+	"code.google.com/p/go-charset/charset"
+	_ "code.google.com/p/go-charset/data" // NZBs often use iso-8859-1
+	"github.com/negz/xmlstream"
 )
 
 // Segment represents a segment of a file posted to Usenet and represented in an NZB

@@ -5,10 +5,11 @@ package nntp
 import (
 	"crypto/tls"
 	"fmt"
-	"github.com/negz/grabby/util"
-	"github.com/willglynn/nntp"
 	"io"
 	"sync"
+
+	"github.com/negz/grabby/util"
+	"github.com/willglynn/nntp"
 )
 
 // SessionError records an error handling a server's sessions.

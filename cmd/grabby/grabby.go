@@ -2,15 +2,16 @@ package main
 
 import (
 	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"time"
+
 	"github.com/negz/grabby/decode/yenc"
 	"github.com/negz/grabby/nntp"
 	"github.com/negz/grabby/nzb"
 	"github.com/negz/grabby/util"
 	"gopkg.in/alecthomas/kingpin.v1"
-	"log"
-	"os"
-	"path/filepath"
-	"time"
 )
 
 var (
