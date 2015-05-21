@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/negz/grabby/decode/yenc"
-	"github.com/negz/grabby/nntp"
+	"github.com/negz/grabby/nnntp"
 	"github.com/negz/grabby/nzb"
 	"github.com/negz/grabby/util"
 	"gopkg.in/alecthomas/kingpin.v1"
@@ -36,8 +36,7 @@ func main() {
 	}
 
 	// Connect to server
-	s := nntp.NewServer(*server, 119, false, *username, password, *connections)
-	defer s.Disconnect()
+	s := nnntp.NewServer(*server, 119, false, *username, password, *connections)
 
 	// Parse NZB file
 	n, err := nzb.NewFromFile(*nzbfile)
@@ -46,7 +45,7 @@ func main() {
 	}
 
 	// Make a slice of things to grab.
-	var grab []*nntp.ArticleRequest
+	var grab []*nnntp.ArticleRequest
 	for _, file := range n.Files {
 		for _, group := range file.Groups {
 			for _, segment := range file.Segments {
@@ -56,7 +55,7 @@ func main() {
 					log.Fatalf("Unable to create output file %v: %v", fp, err)
 				}
 				defer of.Close()
-				request := &nntp.ArticleRequest{Group: group, ID: segment.ArticleID, WriteTo: yenc.NewDecoder(of)}
+				request := &nnntp.ArticleRequest{Group: group, ID: segment.ArticleID, WriteTo: yenc.NewDecoder(of)}
 				grab = append(grab, request)
 			}
 		}
@@ -64,10 +63,16 @@ func main() {
 
 	// Send requests.
 	// Create grabby channels
-	req := make(chan *nntp.ArticleRequest, len(grab))
-	resp := make(chan *nntp.ArticleResponse, len(grab))
+	req := make(chan *nnntp.ArticleRequest, len(grab))
+	resp := make(chan *nnntp.ArticleResponse, len(grab))
 	for i := 0; i < s.MaxSessions; i++ {
-		go s.Grabby(req, resp)
+		sn, err := nnntp.NewSession(s)
+		if err != nil {
+			log.Fatalf("Failed to create new session for %v: %v", s, err)
+		}
+		// TODO(negz): This should probably happen if/when req is closed?
+		defer sn.Close()
+		go sn.Grabby(req, resp)
 	}
 	for _, request := range grab {
 		req <- request
@@ -83,7 +88,6 @@ func main() {
 			log.Printf("Wrote %v bytes for article %v", response.Bytes, response.ID)
 		// TODO(negz): This doesn't seem to work.
 		case <-time.After(time.Second * 30):
-			s.Disconnect()
 			log.Fatalln("Suspiciously quiet. Are we done?")
 		default:
 			log.Println("No responses to handle.")
