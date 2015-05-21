@@ -70,12 +70,12 @@ func TestDecode(t *testing.T) {
 	for _, tt := range decodeTests {
 		y, err := ioutil.ReadFile(tt.yenc)
 		if err != nil {
-			t.Errorf("error opening test data %v", tt.yenc)
+			t.Errorf("error opening test data %v: %v", tt.yenc, err)
 			continue
 		}
 		p, err := ioutil.ReadFile(tt.plain)
 		if err != nil {
-			t.Errorf("error opening test data %v", tt.plain)
+			t.Errorf("error opening test data %v: %v", tt.plain, err)
 			continue
 		}
 

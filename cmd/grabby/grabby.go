@@ -46,7 +46,7 @@ func main() {
 	}
 
 	// Make a slice of things to grab.
-	grab := make([]*nntp.ArticleRequest, 0)
+	var grab []*nntp.ArticleRequest
 	for _, file := range n.Files {
 		for _, group := range file.Groups {
 			for _, segment := range file.Segments {
