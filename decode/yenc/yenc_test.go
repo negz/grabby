@@ -104,3 +104,22 @@ func TestDecode(t *testing.T) {
 		}
 	}
 }
+
+/*
+ This rudimentary benchmark indicates that using precomputed decode maps doesn't
+ actually give much of a speedup.
+*/
+func BenchmarkDecodeMultipart(b *testing.B) {
+	bb := decodeTests[2]
+	y, err := ioutil.ReadFile(bb.yenc)
+	if err != nil {
+		b.Fatalf("error opening test data %v: %v", bb.yenc, err)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b := new(bytes.Buffer)
+		d := NewDecoder(b)
+		_, err = d.Write(y)
+	}
+}
