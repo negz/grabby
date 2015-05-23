@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/negz/grabby/decode/yenc"
@@ -17,6 +18,50 @@ import (
 
 func outFile(path, nzb, subject string, segment int) string {
 	return filepath.Join(path, fmt.Sprintf("%v.%v.%v", nzb, util.HashString(subject), segment))
+}
+
+func queueSegments(grabbers *sync.WaitGroup, nzbfile, out string, req chan<- *nntp.ArticleRequest) {
+	n, err := nzb.NewFromFile(nzbfile)
+	if err != nil {
+		log.Fatalf("Error parsing NZB %v: %v", nzbfile, err)
+	}
+
+	for _, file := range n.Files {
+		for _, group := range file.Groups {
+			for _, segment := range file.Segments {
+				fp := outFile(out, n.Filename, file.Subject, segment.Number)
+				of, err := os.Create(fp)
+				if err != nil {
+					log.Fatalf("unable to create output file %v: %v", fp, err)
+				}
+				defer of.Close()
+				req <- &nntp.ArticleRequest{Group: group, ID: segment.ArticleID, WriteTo: yenc.NewDecoder(of)}
+			}
+		}
+	}
+	close(req)
+	// Wait for grabbers to be done before closing output files.
+	grabbers.Wait()
+}
+
+func displayProgress(st time.Time, resp <-chan *nntp.ArticleResponse) {
+	var tb int64 = 0
+	for {
+		select {
+		case r := <-resp:
+			if r.Error != nil {
+				log.Printf("Error getting article %v: %v", r.ID, r.Error)
+			}
+			tb += r.Bytes
+		default:
+			d := time.Since(st)
+			rate := float64(tb) / d.Seconds()
+			log.Printf(
+				"Downloaded %v (%v/s)",
+				bytefmt.ByteSize(uint64(tb)), bytefmt.ByteSize(uint64(rate)))
+			time.Sleep(time.Second)
+		}
+	}
 }
 
 // This is mostly a horrible test harness for the moment.
@@ -39,33 +84,11 @@ func main() {
 	// Connect to server
 	s := nntp.NewServer(*server, 119, false, *username, password, *connections)
 
-	// Parse NZB file
-	n, err := nzb.NewFromFile(*nzbfile)
-	if err != nil {
-		log.Fatalf("Error parsing NZB: %v", err)
-	}
-
-	// Make a slice of things to grab.
-	var requests []*nntp.ArticleRequest
-	for _, file := range n.Files {
-		for _, group := range file.Groups {
-			for _, segment := range file.Segments {
-				fp := outFile(*outdir, n.Filename, file.Subject, segment.Number)
-				of, err := os.Create(fp)
-				if err != nil {
-					log.Fatalf("Unable to create output file %v: %v", fp, err)
-				}
-				defer of.Close()
-				request := &nntp.ArticleRequest{Group: group, ID: segment.ArticleID, WriteTo: yenc.NewDecoder(of)}
-				requests = append(requests, request)
-			}
-		}
-	}
-	log.Printf("Will send %v requests", len(requests))
-
-	// Create grabbers
-	req := make(chan *nntp.ArticleRequest, len(requests))
-	resp := make(chan *nntp.ArticleResponse, len(requests))
+	// Do the grabbening
+	grabbers := new(sync.WaitGroup)
+	req := make(chan *nntp.ArticleRequest, s.MaxSessions)
+	resp := make(chan *nntp.ArticleResponse, s.MaxSessions)
+	startTime := time.Now()
 	for i := 0; i < s.MaxSessions; i++ {
 		sn, err := nntp.NewSession(s, nntp.Dial)
 		if err != nil {
@@ -73,32 +96,11 @@ func main() {
 			continue
 		}
 		defer sn.Quit()
-		go sn.Grab(req, resp)
+		grabbers.Add(1)
+		go sn.Grab(grabbers, req, resp)
 	}
-
-	// Do the grabbening.
-	startTime := time.Now()
-	for _, r := range requests {
-		req <- r
-	}
-
-	var responses []*nntp.ArticleResponse
-	var tb int64 = 0
-	for len(requests) > len(responses) {
-		select {
-		case r := <-resp:
-			if r.Error != nil {
-				log.Printf("Error getting article %v: %v", r.ID, r.Error)
-			}
-			log.Printf("Wrote %v for article %v", bytefmt.ByteSize(uint64(r.Bytes)), r.ID)
-			responses = append(responses, r)
-			tb += r.Bytes
-		}
-	}
-
-	d := time.Since(startTime)
-	rate := float64(tb) / d.Seconds()
-	log.Printf(
-		"Downloaded %v in %v (%v/s)",
-		bytefmt.ByteSize(uint64(tb)), d, bytefmt.ByteSize(uint64(rate)))
+	go queueSegments(grabbers, *nzbfile, *outdir, req)
+	go displayProgress(startTime, resp)
+	grabbers.Wait()
+	log.Println("Finished!")
 }

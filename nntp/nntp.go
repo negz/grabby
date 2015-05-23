@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/negz/grabby/util"
 	"github.com/willglynn/nntp"
@@ -136,7 +137,8 @@ type ArticleResponse struct {
 }
 
 // Grab fulfills ArticleRequests with ArticleResponses.
-func (s *Session) Grab(req <-chan *ArticleRequest, resp chan<- *ArticleResponse) {
+func (s *Session) Grab(wg *sync.WaitGroup, req <-chan *ArticleRequest, resp chan<- *ArticleResponse) {
+	defer wg.Done()
 	for request := range req {
 		bytes, err := s.writeArticleBody(request.Group, request.ID, request.WriteTo)
 		resp <- &ArticleResponse{ArticleRequest: request, Bytes: bytes, Error: err}
