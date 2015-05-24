@@ -5,6 +5,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,7 +19,14 @@ import (
 )
 
 func outFile(path, nzb, subject string, segment int) string {
-	return filepath.Join(path, fmt.Sprintf("%v.%v.%v", nzb, util.HashString(subject), segment))
+	m := regexp.MustCompile(`(?i).+\.(vol[\d\+]+\.par2).*`).FindStringSubmatch(subject)
+	if len(m) > 1 {
+		return filepath.Join(path, fmt.Sprintf("%v.%v.%v.%04d", nzb, util.HashString(subject), m[1], segment))
+	}
+	if strings.Contains(subject, ".par2") {
+		return filepath.Join(path, fmt.Sprintf("%v.%v.par2.%04d", nzb, util.HashString(subject), segment))
+	}
+	return filepath.Join(path, fmt.Sprintf("%v.%v.%04d", nzb, util.HashString(subject), segment))
 }
 
 func queueSegments(grabbers *sync.WaitGroup, nzbfile, out string, req chan<- *nntp.ArticleRequest) {
