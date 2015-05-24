@@ -185,24 +185,24 @@ func (d *Decoder) verifyCRC32s() error {
 // decodeLine decodes a single line of yEnc data, writing it to the output
 // writer. Output is also written to the CRC32 hash for future verification.
 func (d *Decoder) decodeLine(line []byte) error {
-	// TODO(negz): It would be nice to reuse the input line, but we don't write
-	// the '=' control character out and I'm too lazy to handle that.
-	outLine := make([]byte, 0, len(line))
+	p := 0
 	for _, b := range line {
 		switch {
 		case d.nextByteIsCritical:
-			outLine = append(outLine, d.criticalDecodeMap[b])
+			line[p] = d.criticalDecodeMap[b]
 			d.nextByteIsCritical = false
+			p++
 		case b == '=':
 			d.nextByteIsCritical = true
 		default:
-			outLine = append(outLine, d.decodeMap[b])
+			line[p] = d.decodeMap[b]
+			p++
 		}
 	}
-	if _, err := d.w.Write(outLine); err != nil {
+	if _, err := d.w.Write(line[:p]); err != nil {
 		return err
 	}
-	if _, err := d.crc.Write(outLine); err != nil {
+	if _, err := d.crc.Write(line[:p]); err != nil {
 		return err
 	}
 	return nil
