@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"hash/fnv"
 	"io/ioutil"
-	"strconv"
 )
 
 // PasswordFromFile reads a password from a file.
@@ -25,7 +24,7 @@ func FormatArticleID(id string) string {
 func HashBytes(b []byte) string {
 	h := fnv.New64a()
 	h.Write(b)
-	return strconv.FormatUint(h.Sum64(), 16)
+	return fmt.Sprintf("%016x", h.Sum64())
 }
 
 // HashString returns the FNV-1a 64 bit hex hash for the supplied string.
