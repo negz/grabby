@@ -67,10 +67,10 @@ func (n *NZB) String() string {
 }
 
 // New unmarshals an io.Reader into an *NZB.
-func New(xml io.Reader) (*NZB, error) {
+func New(x io.Reader) (*NZB, error) {
 	n := &NZB{Metadata: make([]*Metadata, 0), Files: make([]*File, 0)}
 	// TODO(negz): This might be overkill for NZB files.
-	s := xmlstream.NewScanner(xml, &Metadata{}, &File{})
+	s := xmlstream.NewScanner(x, &Metadata{}, &File{})
 	s.Decoder.CharsetReader = charset.NewReader
 
 	for s.Scan() {
