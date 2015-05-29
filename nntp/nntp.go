@@ -8,116 +8,21 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
-	"sync"
+	"time"
 
 	"github.com/negz/grabby/util"
 	"github.com/willglynn/nntp"
+	"gopkg.in/tomb.v2"
 )
 
 // conner is an interface that wraps the functionality of nntp.Conn().
+// Mostly for testing purposes.
 type conner interface {
 	Authenticate(u, p string) error
 	EnableCompression() error
 	Group(g string) (*nntp.Group, error)
 	Body(id string) (io.Reader, error)
 	Quit() error
-}
-
-// A Server represents an NNTP server, which may have many connections
-type Server struct {
-	Hostname    string
-	Port        int
-	TLS         bool
-	TLSConfig   *tls.Config
-	Username    string
-	password    string
-	MaxSessions int
-}
-
-// String returns the server as a hostname:port string.
-func (s *Server) String() string {
-	return fmt.Sprintf("%v:%v", s.Hostname, s.Port)
-}
-
-// NewServer creates and a initialises a new Server.
-func NewServer(hostname string, port int, useTLS bool, username, password string, maxSessions int) *Server {
-	return &Server{
-		Hostname:    hostname,
-		Port:        port,
-		TLS:         useTLS,
-		TLSConfig:   &tls.Config{InsecureSkipVerify: true},
-		Username:    username,
-		password:    password,
-		MaxSessions: maxSessions,
-	}
-}
-
-// A dialer dials a server and returns a conner.
-type dialer func(*Server) (conner, error)
-
-// Dial dials the supplied *Server, returning a connection.
-func Dial(s *Server) (conner, error) {
-	if s.TLS {
-		return nntp.DialTLS("tcp", fmt.Sprint(s), s.TLSConfig)
-	}
-	return nntp.Dial("tcp", fmt.Sprint(s))
-}
-
-// A Session represents a single connection to a *Server.
-type Session struct {
-	Server       *Server
-	CurrentGroup string
-	Compressed   bool
-	c            conner
-}
-
-// NewSession creates, authenticates, and attempts to enable compression for a new *Session.
-func NewSession(s *Server, d dialer) (*Session, error) {
-	sn := &Session{Server: s}
-	c, err := d(s)
-	if err != nil {
-		return nil, err
-	}
-	sn.c = c
-	if err = sn.c.Authenticate(s.Username, s.password); err != nil {
-		return nil, err
-	}
-	if err = sn.c.EnableCompression(); err == nil {
-		sn.Compressed = true
-	}
-	return sn, nil
-}
-
-// Quit() terminates a *Session, including sending QUIT.
-func (s *Session) Quit() error {
-	return s.c.Quit()
-}
-
-// selectGroup switches the session to the requested group.
-// This is a no-op if the session is already in the requested group.
-func (s *Session) selectGroup(g string) error {
-	if s.CurrentGroup == g {
-		return nil
-	}
-	if _, err := s.c.Group(g); err != nil {
-		return err
-	}
-	s.CurrentGroup = g
-	return nil
-}
-
-// writeArticleBody writes the requested article's body to the supplied
-// io.Writer.
-func (s *Session) writeArticleBody(group, id string, w io.Writer) (int64, error) {
-	if err := s.selectGroup(group); err != nil {
-		return 0, err
-	}
-	body, err := s.c.Body(util.FormatArticleID(id))
-	if err != nil {
-		return 0, err
-	}
-
-	return io.Copy(w, body)
 }
 
 // An ArticleRequest specifies an article to download by its Group and ID
@@ -132,15 +37,238 @@ type ArticleRequest struct {
 // io.Reader or an error.
 type ArticleResponse struct {
 	*ArticleRequest
-	Bytes int64
-	Error error
+	Bytes    int64
+	Duration time.Duration
+	Error    error
 }
 
-// Grab fulfills ArticleRequests with ArticleResponses.
-func (s *Session) Grab(wg *sync.WaitGroup, req <-chan *ArticleRequest, resp chan<- *ArticleResponse) {
-	defer wg.Done()
-	for request := range req {
-		bytes, err := s.writeArticleBody(request.Group, request.ID, request.WriteTo)
-		resp <- &ArticleResponse{ArticleRequest: request, Bytes: bytes, Error: err}
+// A Server represents an NNTP server, which may have many connections
+type Server struct {
+	// TODO(negz): Use a single bidirectional channel?
+	// Using two for now because I think we want to fan in on responses only.
+	Hostname    string
+	Port        int
+	TLS         bool
+	TLSConfig   *tls.Config
+	Username    string
+	password    string
+	dialSession func(*Server) (*Session, error)
+	sessions    []*Session
+	articleReq  chan *ArticleRequest
+	articleRsp  chan *ArticleResponse
+	t           *tomb.Tomb
+}
+
+// String returns the server as a hostname:port string.
+func (s *Server) String() string {
+	return fmt.Sprintf("%v:%v", s.Hostname, s.Port)
+}
+
+// A ServerOption is a function that can be passed in to NewServer to influence
+// how the Server is created.
+type ServerOption func(*Server) error
+
+// TLS is a ServerOption that enables TLS using the supplied tls.Config.
+func TLS(c *tls.Config) ServerOption {
+	return func(s *Server) error {
+		s.TLS = true
+		s.TLSConfig = c
+		return nil
 	}
+}
+
+// Credentials is a ServerOption that enables authentication using the supplied
+// username and password.
+func Credentials(username, password string) ServerOption {
+	return func(s *Server) error {
+		s.Username, s.password = username, password
+		return nil
+	}
+}
+
+// SessionDialer is a ServerOption that allows the use of an alternative
+// underlying session creation function.
+func SessionDialer(d func(*Server) (*Session, error)) ServerOption {
+	return func(s *Server) error {
+		s.dialSession = d
+		return nil
+	}
+}
+
+// NewServer creates and a initialises a new Server.
+func NewServer(hostname string, port int, maxSessions int, so ...ServerOption) (*Server, error) {
+	s := &Server{
+		Hostname:    hostname,
+		Port:        port,
+		dialSession: nntpDial,
+		sessions:    make([]*Session, maxSessions),
+		articleReq:  make(chan *ArticleRequest, maxSessions),
+		articleRsp:  make(chan *ArticleResponse, maxSessions),
+	}
+	for _, o := range so {
+		if err := o(s); err != nil {
+			return nil, err
+		}
+	}
+	return s, nil
+}
+
+// A Session represents a single connection to a *Server.
+type Session struct {
+	c             conner
+	Connected     bool
+	Authenticated bool
+	Compressed    bool
+	CurrentGroup  string
+}
+
+// nntpDial is the default dialSession.
+// It uses github.com/willglynn to create and return a Session.
+func nntpDial(s *Server) (*Session, error) {
+	var err error
+	sn := &Session{}
+
+	switch s.TLS {
+	case true:
+		sn.c, err = nntp.DialTLS("tcp", fmt.Sprint(s), s.TLSConfig)
+	case false:
+		sn.c, err = nntp.Dial("tcp", fmt.Sprint(s))
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	sn.Connected = true
+	return sn, nil
+}
+
+// Authenticate authenticates a session. It does nothing if the supplied
+// username is the empty string.
+func (sn *Session) Authenticate(username, password string) error {
+	if username == "" {
+		return nil
+	}
+	if err := sn.c.Authenticate(username, password); err != nil {
+		return err
+	}
+	sn.Authenticated = true
+	return nil
+}
+
+// Compress attempts to enable compression for a session.
+func (sn *Session) Compress() {
+	if err := sn.c.EnableCompression(); err == nil {
+		sn.Compressed = true
+	}
+}
+
+// selectGroup switches the session to the requested group.
+// This is a no-op if the session is already in the requested group.
+func (sn *Session) selectGroup(g string) error {
+	if sn.CurrentGroup == g {
+		return nil
+	}
+	if _, err := sn.c.Group(g); err != nil {
+		return err
+	}
+	sn.CurrentGroup = g
+	return nil
+}
+
+// writeArticleBody writes the requested article's body to the supplied
+// io.Writer.
+func (sn *Session) writeArticleBody(group, id string, w io.Writer) (int64, error) {
+	if err := sn.selectGroup(group); err != nil {
+		return 0, err
+	}
+	body, err := sn.c.Body(util.FormatArticleID(id))
+	if err != nil {
+		return 0, err
+	}
+
+	return io.Copy(w, body)
+}
+
+// Quit terminates a Session, including sending QUIT.
+func (sn *Session) Quit() error {
+	sn.Connected = false
+	sn.Authenticated = false
+	sn.Compressed = false
+	sn.CurrentGroup = ""
+	return sn.c.Quit()
+}
+
+func (s *Server) newSession() (*Session, error) {
+	sn, err := s.dialSession(s)
+	if err != nil {
+		return nil, err
+	}
+	if err = sn.Authenticate(s.Username, s.password); err != nil {
+		return nil, err
+	}
+	sn.Compress()
+	return sn, nil
+}
+
+// HandleGrabs uses a Server's sessions to fulfill ArticleRequests.
+// All sessions will be quit if any one session becomes unhealthy.
+func (s *Server) HandleGrabs() error {
+	if s.Working() {
+		return nil
+	}
+
+	// Make sure all sessions are connected.
+	for i := 0; i < len(s.sessions); i++ {
+		sn, err := s.newSession()
+		if err != nil {
+			return err
+		}
+		s.sessions[i] = sn
+	}
+
+	// Tombs cannot be re-used once they have died, so we create a new one here.
+	s.t = new(tomb.Tomb)
+	for _, sn := range s.sessions {
+		s.t.Go(func() error {
+			for {
+				select {
+				case request := <-s.articleReq:
+					start := time.Now()
+					bytes, err := sn.writeArticleBody(request.Group, request.ID, request.WriteTo)
+					// A ProtocolError indicates an unhealthy session.
+					if _, ok := err.(nntp.ProtocolError); ok {
+						return err
+					}
+					s.articleRsp <- &ArticleResponse{
+						ArticleRequest: request,
+						Bytes:          bytes,
+						Duration:       time.Since(start),
+						Error:          err,
+					}
+				case <-s.t.Dying():
+					return nil
+				}
+			}
+		})
+	}
+	return nil
+}
+
+// Working returns true if our server is still handling requests.
+func (s *Server) Working() bool {
+	return s.t != nil && s.t.Alive()
+}
+
+// Shutdown disconnects all of the Server's sessions.
+func (s *Server) Shutdown() error {
+	if s.t == nil {
+		return nil
+	}
+	s.t.Kill(nil)
+	err := s.t.Wait()
+	for _, sn := range s.sessions {
+		// TODO(negz): Log errors? The connection is closed regardless.
+		sn.Quit()
+	}
+	return err
 }
