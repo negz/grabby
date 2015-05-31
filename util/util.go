@@ -42,3 +42,13 @@ func ValidCRCString(c uint32) map[string]bool {
 		fmt.Sprintf("%08X", c): true,
 	}
 }
+
+// UpdateDownloadRate updates a supplied bytes-per-second download rate based on
+// the provided bytes downloaded in seconds time. It uses an exponentially
+// weighted moving average to decay the influence of older rates on the average.
+func UpdateDownloadRate(decay, rate, seconds float64, bytes int64) float64 {
+	if rate == 0 {
+		return float64(bytes) / seconds
+	}
+	return ((float64(bytes) / seconds) * decay) + (rate * (1 - decay))
+}
