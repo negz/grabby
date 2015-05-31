@@ -177,8 +177,8 @@ func TestGrab(t *testing.T) {
 
 		for _, g := range tt.groups {
 			b := new(bytes.Buffer)
-			s.articleReq <- &ArticleRequest{Group: g, ID: tt.id, WriteTo: b}
-			rsp := <-s.articleRsp
+			s.ArticleReq <- &ArticleRequest{Group: g, ID: tt.id, WriteTo: b}
+			rsp := <-s.ArticleRsp
 
 			if rsp.Error != nil {
 				t.Errorf("rsp.Error: %v", rsp.Error)
@@ -187,6 +187,10 @@ func TestGrab(t *testing.T) {
 			if rsp.Bytes != int64(len(tt.id)+2) {
 				t.Errorf("rsp.Bytes == %v, wanted %v", rsp.Bytes, len(tt.id)+2)
 			}
+		}
+
+		if err = s.Err(); err != nil {
+			t.Errorf("s.Err(): %v", err)
 		}
 
 		// Shutdown fo really reals

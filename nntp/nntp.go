@@ -54,8 +54,8 @@ type Server struct {
 	password    string
 	dialSession func(*Server) (*Session, error)
 	sessions    []*Session
-	articleReq  chan *ArticleRequest
-	articleRsp  chan *ArticleResponse
+	ArticleReq  chan *ArticleRequest
+	ArticleRsp  chan *ArticleResponse
 	t           *tomb.Tomb
 }
 
@@ -102,8 +102,8 @@ func NewServer(hostname string, port int, maxSessions int, so ...ServerOption) (
 		Port:        port,
 		dialSession: nntpDial,
 		sessions:    make([]*Session, maxSessions),
-		articleReq:  make(chan *ArticleRequest, maxSessions),
-		articleRsp:  make(chan *ArticleResponse, maxSessions),
+		ArticleReq:  make(chan *ArticleRequest, maxSessions),
+		ArticleRsp:  make(chan *ArticleResponse, maxSessions),
 	}
 	for _, o := range so {
 		if err := o(s); err != nil {
@@ -120,6 +120,11 @@ type Session struct {
 	Authenticated bool
 	Compressed    bool
 	CurrentGroup  string
+}
+
+// NewSession returns a new session using the supplied conner.
+func NewSession(c conner) *Session {
+	return &Session{c: c}
 }
 
 // nntpDial is the default dialSession.
@@ -232,14 +237,14 @@ func (s *Server) HandleGrabs() error {
 		s.t.Go(func() error {
 			for {
 				select {
-				case request := <-s.articleReq:
+				case request := <-s.ArticleReq:
 					start := time.Now()
 					bytes, err := sn.writeArticleBody(request.Group, request.ID, request.WriteTo)
 					// A ProtocolError indicates an unhealthy session.
 					if _, ok := err.(nntp.ProtocolError); ok {
 						return err
 					}
-					s.articleRsp <- &ArticleResponse{
+					s.ArticleRsp <- &ArticleResponse{
 						ArticleRequest: request,
 						Bytes:          bytes,
 						Duration:       time.Since(start),
@@ -257,6 +262,14 @@ func (s *Server) HandleGrabs() error {
 // Working returns true if our server is still handling requests.
 func (s *Server) Working() bool {
 	return s.t != nil && s.t.Alive()
+}
+
+// Err returns any errors that have caused the server to die.
+func (s *Server) Err() error {
+	if s.Working() {
+		return nil
+	}
+	return s.t.Err()
 }
 
 // Shutdown disconnects all of the Server's sessions.
