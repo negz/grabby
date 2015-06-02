@@ -96,11 +96,16 @@ func TestDecode(t *testing.T) {
 		if string(p) != b.String() {
 			t.Errorf("d.Write(%v) != %v", tt.yenc, tt.plain)
 		}
-		if d.Header.Name != tt.name {
-			t.Errorf("d.Name() == %v, wanted %v", d.Header.Name, tt.name)
+
+		dd, ok := d.(*Decoder)
+		if !ok {
+			t.Errorf("d.(*Decoder) != ok")
 		}
-		if d.Header.Multipart != tt.multipart {
-			t.Errorf("%v d.Header.Multipart == %v, wanted %v", tt.yenc, d.Header.Multipart, tt.multipart)
+		if dd.header.name != tt.name {
+			t.Errorf("d.name() == %v, wanted %v", dd.header.name, tt.name)
+		}
+		if dd.header.multipart != tt.multipart {
+			t.Errorf("%v d.Header.multipart == %v, wanted %v", tt.yenc, dd.header.multipart, tt.multipart)
 		}
 	}
 }
@@ -109,7 +114,7 @@ func TestDecode(t *testing.T) {
  This rudimentary benchmark indicates that using precomputed decode maps doesn't
  actually give much of a speedup.
 */
-func BenchmarkDecodeMultipart(b *testing.B) {
+func BenchmarkDecodemultipart(b *testing.B) {
 	bb := decodeTests[2]
 	y, err := ioutil.ReadFile(bb.yenc)
 	if err != nil {

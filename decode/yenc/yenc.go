@@ -17,45 +17,38 @@ import (
 	"github.com/negz/grabby/util"
 )
 
-// maxHeaderBuffer specifies how many bytes we should read before giving up on
+// maxheaderBuffer specifies how many bytes we should read before giving up on
 // receiving a yEnc header.
-const maxHeaderBuffer int = 1024
+const maxheaderBuffer int = 1024
 
-// A DecodeError records an error decoding yEnc encoded data.
+// A DecodeError records an error decoding data.
 type DecodeError string
 
 func (err DecodeError) Error() string {
 	return string(err)
 }
 
-// IsDecodeError returns true if error e was recorded while decoding a yEnc
-// encoded message.
-func IsDecodeError(e error) bool {
-	_, ok := e.(DecodeError)
-	return ok
+// A header represents a yEnc header.
+type header struct {
+	multipart bool
+	part      int // All int because they're derived from strconv.Atoi()
+	total     int
+	line      int
+	size      int
+	name      string
 }
 
-// A Header represents a yEnc header.
-type Header struct {
-	Multipart bool
-	Part      int // All int because they're derived from strconv.Atoi()
-	Total     int
-	Line      int
-	Size      int
-	Name      string
-}
-
-// A PartHeader represents a yEnc part header for multipart binaries.
-type PartHeader struct {
+// A partHeader represents a yEnc part header for multipart binaries.
+type partHeader struct {
 	Begin int
 	End   int
 }
 
-// A Trailer represents a yEnc part trailer.
-type Trailer struct {
-	Size      int
-	CRC32     string
-	PartCRC32 string
+// A trailer represents a yEnc part trailer.
+type trailer struct {
+	size      int
+	crc32     string
+	partCRC32 string
 }
 
 // A Decoder wraps an io.Writer, decoding yEnc as it writes.
@@ -65,16 +58,16 @@ type Decoder struct {
 	b                  *bytes.Buffer
 	nextByteIsCritical bool
 	crc                hash.Hash32
-	Header             *Header
-	PartHeader         *PartHeader
-	Trailer            *Trailer
-	bytesBeforeHeader  int
+	header             *header
+	partHeader         *partHeader
+	trailer            *trailer
+	bytesBeforeheader  int
 	decodeMap          [256]byte
 	criticalDecodeMap  [256]byte
 }
 
-// NewDecoder returns a Decoder wrapping the supplied io.Writer.
-func NewDecoder(w io.Writer) *Decoder {
+// NewDecoder returns an io.Writer that decodes the supplied io.Writer.
+func NewDecoder(w io.Writer) io.Writer {
 	d := &Decoder{w: w, b: new(bytes.Buffer), crc: crc32.NewIEEE()}
 	for i := 0; i < len(d.decodeMap); i++ {
 		d.decodeMap[i] = byte((i - 42) & 255)
@@ -110,15 +103,15 @@ func headerBytesToMap(h []byte) (map[string]string, error) {
 	return m, nil
 }
 
-// parseHeader parses a yEnc header if one exists in the buffer.
-func parseHeader(b []byte) (*Header, error) {
+// parseheader parses a yEnc header if one exists in the buffer.
+func parseheader(b []byte) (*header, error) {
 	headerMap, err := headerBytesToMap(b)
-	header := &Header{Name: headerMap["name"]}
+	header := &header{name: headerMap["name"]}
 
-	if header.Line, err = strconv.Atoi(headerMap["line"]); err != nil {
+	if header.line, err = strconv.Atoi(headerMap["line"]); err != nil {
 		return nil, DecodeError(fmt.Sprintf("malformed yEnc header: %v", string(b)))
 	}
-	if header.Size, err = strconv.Atoi(headerMap["size"]); err != nil {
+	if header.size, err = strconv.Atoi(headerMap["size"]); err != nil {
 		return nil, DecodeError(fmt.Sprintf("malformed yEnc header: %v", string(b)))
 	}
 
@@ -126,27 +119,27 @@ func parseHeader(b []byte) (*Header, error) {
 	if headerMap["part"] == "" {
 		return header, nil
 	}
-	if header.Part, err = strconv.Atoi(headerMap["part"]); err != nil {
+	if header.part, err = strconv.Atoi(headerMap["part"]); err != nil {
 		return nil, DecodeError(fmt.Sprintf("malformed yEnc header: %v", string(b)))
 	}
 
-	header.Multipart = true
+	header.multipart = true
 
 	// total is not required by yEnc 1.1
 	if headerMap["total"] == "" {
 		return header, nil
 	}
-	if header.Total, err = strconv.Atoi(headerMap["total"]); err != nil {
+	if header.total, err = strconv.Atoi(headerMap["total"]); err != nil {
 		return nil, DecodeError(fmt.Sprintf("malformed yEnc header: %v", string(b)))
 	}
 
 	return header, nil
 }
 
-// parsePartHeader parses a yEnc part header if one exists in the buffer.
-func parsePartHeader(b []byte) (*PartHeader, error) {
+// parsepartHeader parses a yEnc part header if one exists in the buffer.
+func parsepartHeader(b []byte) (*partHeader, error) {
 	headerMap, err := headerBytesToMap(b)
-	header := &PartHeader{}
+	header := &partHeader{}
 	if header.Begin, err = strconv.Atoi(headerMap["begin"]); err != nil {
 		return nil, DecodeError(fmt.Sprintf("malformed yEnc part header: %v", string(b)))
 	}
@@ -157,41 +150,41 @@ func parsePartHeader(b []byte) (*PartHeader, error) {
 	return header, nil
 }
 
-// parseTrailer parses a yEnc part trailer if one exists in the buffer.
-func parseTrailer(b []byte) (*Trailer, error) {
+// parsetrailer parses a yEnc part trailer if one exists in the buffer.
+func parsetrailer(b []byte) (*trailer, error) {
 	trailerMap, err := headerBytesToMap(b)
-	trailer := &Trailer{}
-	if trailer.Size, err = strconv.Atoi(trailerMap["size"]); err != nil {
+	trailer := &trailer{}
+	if trailer.size, err = strconv.Atoi(trailerMap["size"]); err != nil {
 		return nil, DecodeError(fmt.Sprintf("malformed yEnc part trailer: %v", string(b)))
 	}
 
 	// CRCs are optional
-	trailer.CRC32 = trailerMap["crc32"]
-	trailer.PartCRC32 = trailerMap["pcrc32"]
+	trailer.crc32 = trailerMap["crc32"]
+	trailer.partCRC32 = trailerMap["pcrc32"]
 
 	return trailer, nil
 }
 
-// verifyCRC32s verifies any CRC32s found in the trailer.
-// Note that if a pcrc32 (i.e. the CRC32 of this part) is present we ignore
+// verifycrc32s verifies any crc32s found in the trailer.
+// Note that if a pcrc32 (i.e. the crc32 of this part) is present we ignore
 // crc32  as we don't care about the file's larger context.
-func (d *Decoder) verifyCRC32s() error {
+func (d *Decoder) verifycrc32s() error {
 	switch {
-	case d.Trailer.PartCRC32 != "":
-		if !util.ValidCRCString(d.crc.Sum32())[d.Trailer.PartCRC32] {
-			return DecodeError(fmt.Sprintf("invalid part checksum %v - wanted %x", d.Trailer.PartCRC32, d.crc.Sum32()))
+	case d.trailer.partCRC32 != "":
+		if !util.ValidCRCString(d.crc.Sum32())[d.trailer.partCRC32] {
+			return DecodeError(fmt.Sprintf("invalid part checksum %v - wanted %x", d.trailer.partCRC32, d.crc.Sum32()))
 		}
-	case d.Trailer.CRC32 != "":
-		if !util.ValidCRCString(d.crc.Sum32())[d.Trailer.CRC32] {
-			return DecodeError(fmt.Sprintf("invalid checksum %v - wanted %x", d.Trailer.CRC32, d.crc.Sum32()))
+	case d.trailer.crc32 != "":
+		if !util.ValidCRCString(d.crc.Sum32())[d.trailer.crc32] {
+			return DecodeError(fmt.Sprintf("invalid checksum %v - wanted %x", d.trailer.crc32, d.crc.Sum32()))
 		}
 	}
 	return nil
 }
 
-// decodeLine decodes a single line of yEnc data, writing it to the output
-// writer. Output is also written to the CRC32 hash for future verification.
-func (d *Decoder) decodeLine(line []byte) error {
+// decodeline decodes a single line of yEnc data, writing it to the output
+// writer. Output is also written to the crc32 hash for future verification.
+func (d *Decoder) decodeline(line []byte) error {
 	p := 0
 	for _, b := range line {
 		switch {
@@ -216,10 +209,10 @@ func (d *Decoder) decodeLine(line []byte) error {
 }
 
 // Decode decodes yEnc data as it is written to the Decoder's buffer.
-func (d *Decoder) decode() error {
-	for d.Header == nil {
-		if d.bytesBeforeHeader >= maxHeaderBuffer {
-			return DecodeError(fmt.Sprintf("no yEnc header found in first %v bytes", maxHeaderBuffer))
+func (d *Decoder) yDecode() error {
+	for d.header == nil {
+		if d.bytesBeforeheader >= maxheaderBuffer {
+			return DecodeError(fmt.Sprintf("no yEnc header found in first %v bytes", maxheaderBuffer))
 		}
 		if bytes.IndexByte(d.b.Bytes(), '\n') == -1 {
 			return nil
@@ -228,17 +221,17 @@ func (d *Decoder) decode() error {
 		if err != nil {
 			return err
 		}
-		d.bytesBeforeHeader += len(line)
+		d.bytesBeforeheader += len(line)
 		if string(line[:8]) != "=ybegin " {
 			continue
 		}
 		line = bytes.TrimRight(line, "\r\n")
-		if d.Header, err = parseHeader(line); err != nil {
+		if d.header, err = parseheader(line); err != nil {
 			return err
 		}
 	}
 
-	if d.Header.Multipart && (d.PartHeader == nil) {
+	if d.header.multipart && (d.partHeader == nil) {
 		if bytes.IndexByte(d.b.Bytes(), '\n') == -1 {
 			return nil
 		}
@@ -250,7 +243,7 @@ func (d *Decoder) decode() error {
 			return DecodeError("no yEnc part header immediately followed multipart header")
 		}
 		line = bytes.TrimRight(line, "\r\n")
-		if d.PartHeader, err = parsePartHeader(line); err != nil {
+		if d.partHeader, err = parsepartHeader(line); err != nil {
 			return err
 		}
 	}
@@ -263,16 +256,16 @@ func (d *Decoder) decode() error {
 		line = bytes.TrimRight(line, "\r\n")
 
 		if string(line[:6]) == "=yend " {
-			if d.Trailer, err = parseTrailer(line); err != nil {
+			if d.trailer, err = parsetrailer(line); err != nil {
 				return err
 			}
-			if err := d.verifyCRC32s(); err != nil {
+			if err := d.verifycrc32s(); err != nil {
 				return err
 			}
 			return nil
 		}
 
-		if err := d.decodeLine(line); err != nil {
+		if err := d.decodeline(line); err != nil {
 			return err
 		}
 	}
@@ -282,7 +275,7 @@ func (d *Decoder) decode() error {
 // Write wraps the Write() of the embedded io.Writer, decoding along the way.
 func (d *Decoder) Write(p []byte) (int, error) {
 	d.b.Write(p)
-	if err := d.decode(); err != nil {
+	if err := d.yDecode(); err != nil {
 		return 0, err
 	}
 	return len(p), nil
