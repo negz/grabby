@@ -28,6 +28,13 @@ func (err DecodeError) Error() string {
 	return string(err)
 }
 
+// IsDecodeError returns true if error e was recorded while decoding a yEnc
+// encoded message.
+func IsDecodeError(e error) bool {
+	_, ok := e.(DecodeError)
+	return ok
+}
+
 // A Header represents a yEnc header.
 type Header struct {
 	Multipart bool
