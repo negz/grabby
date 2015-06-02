@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/negz/grabby/util"
@@ -40,6 +41,26 @@ type ArticleResponse struct {
 	Bytes    int64
 	Duration time.Duration
 	Error    error
+}
+
+// IsNoSuchGroupError returns true if error e was recorded while attempting to
+// select a non-existent NNTP group.
+func IsNoSuchGroupError(e error) bool {
+	err, ok := e.(nntp.Error)
+	if !ok {
+		return false
+	}
+	return err.Code == 411
+}
+
+// IsNoSuchArticleError returns true if error e was recorded while attempting to
+// select a non-existent NNTP Message-Id.
+func IsNoSuchArticleError(e error) bool {
+	err, ok := e.(nntp.Error)
+	if !ok {
+		return false
+	}
+	return err.Code == 430
 }
 
 // A Server represents an NNTP server, which may have many connections
@@ -120,18 +141,21 @@ type Session struct {
 	Authenticated bool
 	Compressed    bool
 	CurrentGroup  string
+	// TODO(negz): Why are we seeing races for a session's current group? It
+	// should only ever be touched by one goroutine per session.
+	groupMx sync.Locker
 }
 
 // NewSession returns a new session using the supplied conner.
 func NewSession(c conner) *Session {
-	return &Session{c: c}
+	return &Session{c: c, groupMx: new(sync.Mutex)}
 }
 
 // nntpDial is the default dialSession.
 // It uses github.com/willglynn to create and return a Session.
 func nntpDial(s *Server) (*Session, error) {
 	var err error
-	sn := &Session{}
+	sn := &Session{groupMx: new(sync.Mutex)}
 
 	switch s.TLS {
 	case true:
@@ -170,6 +194,8 @@ func (sn *Session) Compress() {
 // selectGroup switches the session to the requested group.
 // This is a no-op if the session is already in the requested group.
 func (sn *Session) selectGroup(g string) error {
+	sn.groupMx.Lock()
+	defer sn.groupMx.Unlock()
 	if sn.CurrentGroup == g {
 		return nil
 	}

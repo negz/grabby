@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/willglynn/nntp"
@@ -49,7 +50,7 @@ func (c *fc) Quit() error {
 }
 
 func fakeDial(s *Server) (*Session, error) {
-	return &Session{c: &fc{Connected: true}, Connected: true}, nil
+	return &Session{c: &fc{Connected: true}, Connected: true, groupMx: new(sync.Mutex)}, nil
 }
 
 type errorDialError string
