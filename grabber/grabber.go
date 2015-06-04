@@ -19,23 +19,97 @@ import (
 	"github.com/negz/grabby/util"
 )
 
+// A StateError records an invalid segment, file, or grabber state transition.
+var StateError = fmt.Errorf("invalid state transition")
+
 type Metadata struct {
 	*nzb.Metadata
 	g *Grabber
 }
 
+type fileState int
+
+const (
+	filePending fileState = iota
+	filePaused
+	fileWorking
+	fileDone
+)
+
 type File struct {
 	*nzb.File
 	g        *Grabber
+	state    fileState
+	stateMx  sync.Locker
 	IsPar2   bool // TODO(negz): May need to store the number of blocks.
-	IsPaused bool
 	Segments []*Segment
+}
+
+func (f *File) Working() error {
+	f.stateMx.Lock()
+	defer f.stateMx.Unlock()
+
+	switch f.state {
+	case fileWorking:
+		return nil
+	case filePending:
+		f.state = fileWorking
+		return nil
+	default:
+		return StateError
+	}
+}
+
+func (f *File) Pause() error {
+	f.stateMx.Lock()
+	defer f.stateMx.Unlock()
+
+	switch f.state {
+	case filePaused:
+		return nil
+	case filePending:
+		f.state = filePaused
+		for _, s := range f.Segments {
+			if err := s.Pause(); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		return StateError
+	}
+}
+
+func (f *File) Resume() error {
+	f.stateMx.Lock()
+	defer f.stateMx.Unlock()
+
+	switch f.state {
+	case filePaused:
+		for _, s := range f.Segments {
+			if err := s.Resume(); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		return StateError
+	}
+}
+
+func (f *File) Done() error {
+	f.stateMx.Lock()
+	defer f.stateMx.Unlock()
+
+	f.state = fileDone
+	return nil
 }
 
 func NewFile(nf *nzb.File, g *Grabber) *File {
 	return &File{
 		File:     nf,
 		g:        g,
+		stateMx:  new(sync.Mutex),
 		IsPar2:   strings.Contains(nf.Subject, ".par2"),
 		Segments: make([]*Segment, 0, len(nf.Segments)),
 	}
@@ -45,6 +119,8 @@ type segmentState int
 
 const (
 	segPending segmentState = iota
+	segPausing
+	segPaused
 	segWorking
 	segFailed
 	segGrabbed
@@ -77,16 +153,71 @@ func createSegmentFile(s *Segment) (io.WriteCloser, error) {
 	return os.Create(filepath.Join(s.f.g.wd, fmt.Sprintf("%v.%08d", s.f.g.Hash(), s.Number)))
 }
 
-func (s *Segment) State() segmentState {
+func (s *Segment) Working() error {
 	s.stateMx.Lock()
 	defer s.stateMx.Unlock()
-	return s.state
+
+	switch s.state {
+	case segWorking:
+		return nil
+	case segPending:
+		s.state = segWorking
+		s.f.Working()
+		return nil
+	case segPausing:
+		s.state = segPaused
+		return StateError
+	default:
+		return StateError
+	}
 }
 
-func (s *Segment) SetState(st segmentState) {
+func (s *Segment) Pause() error {
 	s.stateMx.Lock()
 	defer s.stateMx.Unlock()
-	s.state = st
+
+	switch s.state {
+	case segPaused:
+		return nil
+	case segPending:
+		s.state = segPaused
+		return nil
+	case segWorking:
+		s.state = segPausing
+		return nil
+	default:
+		return StateError
+	}
+}
+
+func (s *Segment) Resume() error {
+	s.stateMx.Lock()
+	defer s.stateMx.Unlock()
+
+	switch s.state {
+	case segPaused:
+		s.state = segPending
+		s.f.g.enqueueT.Go(s.enqueue)
+		return nil
+	default:
+		return StateError
+	}
+}
+
+func (s *Segment) Failed() error {
+	s.stateMx.Lock()
+	defer s.stateMx.Unlock()
+
+	s.state = segFailed
+	return nil
+}
+
+func (s *Segment) Grabbed() error {
+	s.stateMx.Lock()
+	defer s.stateMx.Unlock()
+
+	s.state = segGrabbed
+	return nil
 }
 
 func (s *Segment) selectGroup() string {
@@ -109,69 +240,94 @@ func (s *Segment) selectServer() *Server {
 	return nil
 }
 
-func (s *Segment) enqueue() error {
-	if s.State() == segGrabbed {
-		// We've already got this one.
-		return nil
-	}
-
-	// Create or truncate the decoded output.
-	var err error
-	if s.decodeOut, err = s.f.g.fc(s); err != nil {
-		return fmt.Errorf("cannot enqueue segment %v: %v", s, err)
-	}
-
+func (s *Segment) failCurrentServer() bool {
 	srv := s.selectServer()
 	if srv == nil {
-		// Download has failed on all servers.
-		s.SetState(segFailed)
+		return false
+	}
+	s.failedServer[srv] = true
+	return true
+}
+
+func (s *Segment) enqueue() error {
+	select {
+	case <-s.f.g.enqueueT.Dying():
 		return nil
-	}
+	default:
+		if err := s.Working(); err != nil {
+			return nil
+		}
 
-	// Ignore servers that have been disconnected.
-	// TODO(negz): Don't treat this temporary failure as permanent?
-	if !srv.Working() {
-		s.failedServer[srv] = true
-		s.failedGroup = make(map[string]bool)
-		return s.enqueue()
-	}
+		// Create or truncate the decoded output.
+		var err error
+		if s.decodeOut, err = s.f.g.fc(s); err != nil {
+			// TODO(negz): Log error.
+			// TODO(negz): Pause grabber instead of failing?
+			s.Failed()
+			return nil
+		}
 
-	if srv.Retention > 0 {
-		if time.Since(time.Unix(s.f.Date, 0)) > srv.Retention {
-			// Download is out of this server's retention.
+		// Select the first untried server.
+		srv := s.selectServer()
+		if srv == nil {
+			// Download has failed on all servers.
+			s.Failed()
+			return nil
+		}
+
+		// Ignore servers that have been disconnected.
+		// TODO(negz): Don't treat this temporary failure as permanent?
+		if !srv.Working() {
 			s.failedServer[srv] = true
 			s.failedGroup = make(map[string]bool)
 			return s.enqueue()
 		}
-	}
 
-	// No GROUP needed, just request the article ID.
-	if !srv.MustBeInGroup {
+		if srv.Retention > 0 {
+			if time.Since(time.Unix(s.f.Date, 0)) > srv.Retention {
+				// Download is out of this server's retention.
+				s.failedServer[srv] = true
+				s.failedGroup = make(map[string]bool)
+				return s.enqueue()
+			}
+		}
+
+		// No GROUP needed, just request the article ID.
+		if !srv.MustBeInGroup {
+			srv.ArticleReq <- &nntp.ArticleRequest{
+				ID:      s.ArticleID,
+				WriteTo: s.f.g.decoder(s.decodeOut),
+			}
+			return nil
+		}
+
+		// Select the first untried group.
+		g := s.selectGroup()
+		if g == "" {
+			// Download has failed on this server.
+			s.failedServer[srv] = true
+			s.failedGroup = make(map[string]bool)
+			return s.enqueue()
+		}
+
+		// Request the article ID from the first non-failed group.
 		srv.ArticleReq <- &nntp.ArticleRequest{
+			Group:   g,
 			ID:      s.ArticleID,
 			WriteTo: s.f.g.decoder(s.decodeOut),
 		}
-		s.SetState(segWorking)
 		return nil
 	}
-
-	g := s.selectGroup()
-	if g == "" {
-		// Download has failed on this server.
-		s.failedServer[srv] = true
-		s.failedGroup = make(map[string]bool)
-		return s.enqueue()
-	}
-
-	// Request the article ID from the first non-failed group.
-	srv.ArticleReq <- &nntp.ArticleRequest{
-		Group:   g,
-		ID:      s.ArticleID,
-		WriteTo: s.f.g.decoder(s.decodeOut),
-	}
-	s.SetState(segWorking)
-	return nil
 }
+
+type grabberState int
+
+const (
+	grabPending grabberState = iota
+	grabPaused
+	grabWorking
+	grabDone
+)
 
 type Grabber struct {
 	Name     string
@@ -179,6 +335,8 @@ type Grabber struct {
 	Metadata []*Metadata
 	Files    []*File
 	Strategy *Strategy
+	state    grabberState
+	stateMx  sync.Locker
 	maxRetry int
 	hasher   func(string) string
 	decoder  func(io.Writer) io.Writer
@@ -194,7 +352,7 @@ func fileFromNZBFile(nf *nzb.File, g *Grabber, filter ...regexp.Regexp) *File {
 	}
 	for _, r := range filter {
 		if r.MatchString(nf.Subject) {
-			f.IsPaused = true
+			f.Pause()
 		}
 	}
 	return f
@@ -263,6 +421,7 @@ func New(workDir string, ServerStrategy *Strategy, gro ...GrabberOption) (*Grabb
 	g := &Grabber{
 		wd:       workDir,
 		Strategy: ServerStrategy,
+		stateMx:  new(sync.Mutex),
 		maxRetry: 3,
 		hasher:   util.HashString,
 		decoder:  yenc.NewDecoder, // TODO(negz): Detect encoding.
@@ -285,6 +444,68 @@ func (g *Grabber) Hash() string {
 	return g.hasher(g.Name)
 }
 
+func (g *Grabber) Working() error {
+	g.stateMx.Lock()
+	defer g.stateMx.Unlock()
+
+	switch g.state {
+	case grabWorking:
+		return nil
+	case grabPending:
+		g.state = grabWorking
+		return nil
+	default:
+		return StateError
+	}
+}
+
+func (g *Grabber) Pause() error {
+	g.stateMx.Lock()
+	defer g.stateMx.Unlock()
+
+	switch g.state {
+	case grabPaused:
+		return nil
+	case grabPending:
+		g.state = grabPaused
+		for _, f := range g.Files {
+			if err := f.Pause(); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		return StateError
+	}
+
+}
+
+func (g *Grabber) Resume() error {
+	g.stateMx.Lock()
+	defer g.stateMx.Unlock()
+
+	switch g.state {
+	case grabPaused:
+		for _, f := range g.Files {
+			if err := f.Resume(); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		return StateError
+	}
+
+}
+
+func (g *Grabber) Done() error {
+	g.stateMx.Lock()
+	defer g.stateMx.Unlock()
+
+	g.state = grabDone
+	return nil
+}
+
 func (g *Grabber) handleResponses() {
 	// Handle article responses.
 	g.grabT.Go(func() error {
@@ -305,41 +526,35 @@ func (g *Grabber) handleResponses() {
 					case nntp.IsNoSuchGroupError(rsp.Error):
 						s.failedGroup[rsp.Group] = true
 					case decode.IsDecodeError(rsp.Error):
-						srv := s.selectServer()
-						if srv == nil {
-							s.SetState(segFailed)
+						if !s.failCurrentServer() {
+							s.Failed()
 							continue
 						}
-						s.failedServer[srv] = true
 					case nntp.IsNoSuchArticleError(rsp.Error):
-						srv := s.selectServer()
-						if srv == nil {
-							s.SetState(segFailed)
+						if !s.failCurrentServer() {
+							s.Failed()
 							continue
 						}
-						s.failedServer[srv] = true
 					default:
-						if s.retries < s.f.g.maxRetry {
+						if s.retries <= g.maxRetry {
 							s.retries++
 						} else {
-							srv := s.selectServer()
-							if srv == nil {
-								s.SetState(segFailed)
+							if !s.failCurrentServer() {
+								s.Failed()
 								continue
 							}
-							s.failedServer[srv] = true
 						}
 					}
-					// TODO(negz): Requeuing in a goroutine prevents blocking
-					// when trying to send to the same full channel we're
-					// supposed to consume. However, we should probably have
-					// some way of ensuring these guys GTFO when we're shutdown.
-					go s.enqueue()
+					// TODO(negz): Tomb doesn't make sense here.
+					// enqueue errors should not kill the tomb, and enqueue
+					// does not listen for dying tombs.
+					// Remove enqueue error and have it select for dying tombs?
+					g.enqueueT.Go(s.enqueue)
 					continue
 				}
 				// TODO(negz): Fire on a channel when all unpaused/unfiltered
 				// files are grabbed.
-				s.SetState(segGrabbed)
+				s.Grabbed()
 			case <-g.grabT.Dying():
 				return nil
 			}
@@ -350,9 +565,6 @@ func (g *Grabber) initialEnqueue() {
 	// Initial enqueue of all segments.
 	g.enqueueT.Go(func() error {
 		for _, f := range g.Files {
-			if f.IsPaused {
-				continue
-			}
 			for _, s := range f.Segments {
 				select {
 				case <-g.enqueueT.Dying():
