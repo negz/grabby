@@ -30,7 +30,7 @@ func nntpDialer(a string, c *tls.Config) (conner, error) {
 
 // IsNoSuchGroupError returns true if error e was recorded while attempting to
 // select a non-existent NNTP group.
-func IsNoSuchGroupError(e error) bool {
+func IsNoSuchGroupNNTPError(e error) bool {
 	err, ok := e.(nntp.Error)
 	if !ok {
 		return false
@@ -40,7 +40,7 @@ func IsNoSuchGroupError(e error) bool {
 
 // IsNoSuchArticleError returns true if error e was recorded while attempting to
 // select a non-existent NNTP Message-Id.
-func IsNoSuchArticleError(e error) bool {
+func IsNoSuchArticleNNTPError(e error) bool {
 	err, ok := e.(nntp.Error)
 	if !ok {
 		return false
@@ -50,7 +50,7 @@ func IsNoSuchArticleError(e error) bool {
 
 // IsProtocolError returns true if error e was recorded due to an issue
 // speaking NNTP with the server.
-func IsProtocolError(e error) bool {
+func IsNNTPProtocolError(e error) bool {
 	_, ok := e.(nntp.ProtocolError)
 	return ok
 }

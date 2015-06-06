@@ -6,11 +6,17 @@ package nntp
 
 import (
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"time"
 
 	"gopkg.in/tomb.v2"
+)
+
+var (
+	NoSuchArticleError = errors.New("no such article ID")
+	NoSuchGroupError   = errors.New("no such group")
 )
 
 // An GrabRequest specifies an article to download by its Group and ID
@@ -148,8 +154,13 @@ func (s *Server) HandleGrabs() error {
 				case req := <-s.gReq:
 					start := time.Now()
 					bytes, err := sn.WriteArticleBody(req.Group, req.ID, req.WriteTo)
-					if IsProtocolError(err) {
+					switch {
+					case IsNNTPProtocolError(err):
 						return err
+					case IsNoSuchGroupNNTPError(err):
+						err = NoSuchGroupError
+					case IsNoSuchArticleNNTPError(err):
+						err = NoSuchArticleError
 					}
 					s.gRsp <- &GrabResponse{
 						GrabRequest: req,
