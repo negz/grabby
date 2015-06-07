@@ -1,8 +1,6 @@
 package grabber
 
 import (
-	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -14,40 +12,110 @@ import (
 
 const rateDecay float64 = 0.5
 
-// A Server wraps an nntp.Server with grabber level state information.
-type Server struct {
-	// TODO(negz): Merge into nntp.Server?
-	*nntp.Server
-	Name          string
-	Retention     time.Duration
-	MustBeInGroup bool
-	rate          float64
-	rateMx        sync.Locker
+// An AggregatedGrabResponse wraps an nntp.GrabResponse with the Server
+// that handled it.
+type AggregatedGrabResponse struct {
+	*nntp.GrabResponse
+	Server Serverer
 }
 
-func (s *Server) updateRate(seconds float64, bytes int64) {
+type Serverer interface {
+	// TODO(negz): Merge with nntp.Serverer?
+	nntp.Serverer
+	Name() string
+	Retention() time.Duration
+	MustBeInGroup() bool
+	DownloadRate() float64
+	UpdateRate(seconds float64, bytes int64)
+}
+
+// A Server wraps an nntp.Server with grabber level state information.
+type Server struct {
+	nntp.Serverer
+	name       string
+	retention  time.Duration
+	needsGroup bool
+	rate       float64
+	rateMx     sync.Locker
+}
+
+type ServerOption func(*Server) error
+
+func Retention(d time.Duration) ServerOption {
+	return func(s *Server) error {
+		s.retention = d
+		return nil
+	}
+}
+
+func MustBeInGroup() ServerOption {
+	return func(s *Server) error {
+		s.needsGroup = true
+		return nil
+	}
+}
+
+func NewServer(ns nntp.Serverer, name string, so ...ServerOption) (Serverer, error) {
+	s := &Server{
+		Serverer:   ns,
+		name:       name,
+		retention:  time.Duration(0),
+		needsGroup: true,
+		rateMx:     new(sync.Mutex),
+	}
+
+	for _, o := range so {
+		if err := o(s); err != nil {
+			return nil, err
+		}
+	}
+
+	return s, nil
+}
+
+func (s *Server) Name() string {
+	return s.name
+}
+
+func (s *Server) Retention() time.Duration {
+	return s.retention
+}
+
+func (s *Server) MustBeInGroup() bool {
+	return s.needsGroup
+}
+
+func (s *Server) DownloadRate() float64 {
+	s.rateMx.Lock()
+	defer s.rateMx.Unlock()
+	return s.rate
+}
+
+func (s *Server) UpdateRate(seconds float64, bytes int64) {
 	s.rateMx.Lock()
 	defer s.rateMx.Unlock()
 	s.rate = util.UpdateDownloadRate(rateDecay, s.rate, seconds, bytes)
 }
 
+type Strategizer interface {
+	Servers() []Serverer
+	DownloadRate() float64
+	Connect()
+	Grabbed() <-chan *AggregatedGrabResponse
+	Alive() bool
+	Err() error
+	Shutdown(err error) error
+}
+
 // A Strategy is a priority-ordered group of servers, providing a single
 // aggregate channel of responses from those servers.
 type Strategy struct {
-	Servers    []*Server
-	retry      time.Duration
-	rate       float64
-	rateMx     sync.Locker
-	ArticleRsp chan *nntp.ArticleResponse
-	t          *tomb.Tomb
-}
-
-func (ss *Strategy) String() string {
-	sn := make([]string, 0, len(ss.Servers))
-	for _, s := range ss.Servers {
-		sn = append(sn, fmt.Sprint(s))
-	}
-	return fmt.Sprintf("Server strategy: %v", strings.Join(sn, ", "))
+	servers []Serverer
+	retry   time.Duration
+	rate    float64
+	rateMx  sync.Locker
+	grabRsp chan *AggregatedGrabResponse
+	t       *tomb.Tomb
 }
 
 type StrategyOption func(*Strategy) error
@@ -59,18 +127,17 @@ func ReconnectInterval(r time.Duration) StrategyOption {
 	}
 }
 
-func NewStrategy(servers []*Server, so ...StrategyOption) (*Strategy, error) {
+func NewStrategy(servers []Serverer, so ...StrategyOption) (Strategizer, error) {
 	cb := 0
 	for _, s := range servers {
-		cb += cap(s.ArticleRsp)
+		cb += cap(s.Grabbed())
 	}
 
 	st := &Strategy{
-		Servers:    servers,
-		retry:      30 * time.Second,
-		rateMx:     new(sync.Mutex),
-		ArticleRsp: make(chan *nntp.ArticleResponse, cb),
-		t:          new(tomb.Tomb),
+		servers: servers,
+		retry:   30 * time.Second,
+		rateMx:  new(sync.Mutex),
+		grabRsp: make(chan *AggregatedGrabResponse, cb),
 	}
 
 	for _, o := range so {
@@ -81,31 +148,38 @@ func NewStrategy(servers []*Server, so ...StrategyOption) (*Strategy, error) {
 	return st, nil
 }
 
+func (ss *Strategy) Servers() []Serverer {
+	return ss.servers
+}
+
+func (ss *Strategy) DownloadRate() float64 {
+	ss.rateMx.Lock()
+	defer ss.rateMx.Unlock()
+	return ss.rate
+}
+
 func (ss *Strategy) updateRate(seconds float64, bytes int64) {
 	ss.rateMx.Lock()
 	defer ss.rateMx.Unlock()
 	ss.rate = util.UpdateDownloadRate(rateDecay, ss.rate, seconds, bytes)
 }
 
-func (ss *Strategy) aggregateResponses(s *Server) {
-	agg := func(rc <-chan *nntp.ArticleResponse) func() error {
-		return func() error {
-			for {
-				select {
-				case rsp := <-rc:
-					s.updateRate(rsp.Duration.Seconds(), rsp.Bytes)
-					ss.updateRate(rsp.Duration.Seconds(), rsp.Bytes)
-					ss.ArticleRsp <- rsp
-				case <-ss.t.Dying():
-					return nil
-				}
+func (ss *Strategy) aggregateResponses(s Serverer) {
+	ss.t.Go(func() error {
+		for {
+			select {
+			case rsp := <-s.Grabbed():
+				s.UpdateRate(rsp.Duration.Seconds(), rsp.Bytes)
+				ss.updateRate(rsp.Duration.Seconds(), rsp.Bytes)
+				ss.grabRsp <- &AggregatedGrabResponse{rsp, s}
+			case <-ss.t.Dying():
+				return nil
 			}
 		}
-	}
-	ss.t.Go(agg(s.ArticleRsp))
+	})
 }
 
-func (ss *Strategy) reconnectIfDisconnected(s *Server) {
+func (ss *Strategy) reconnectIfDisconnected(s Serverer) {
 	ss.t.Go(func() error {
 		tick := time.NewTicker(ss.retry)
 		defer tick.Stop()
@@ -124,7 +198,13 @@ func (ss *Strategy) reconnectIfDisconnected(s *Server) {
 // Connect connects and aggregates the responses of all servers in this
 // server strategy.
 func (ss *Strategy) Connect() {
-	for _, s := range ss.Servers {
+	if ss.Alive() {
+		return
+	}
+
+	ss.t = new(tomb.Tomb)
+
+	for _, s := range ss.servers {
 		// TODO(negz): Log errors.
 		s.HandleGrabs()
 		ss.aggregateResponses(s)
@@ -132,11 +212,26 @@ func (ss *Strategy) Connect() {
 	}
 }
 
+func (ss *Strategy) Grabbed() <-chan *AggregatedGrabResponse {
+	return ss.grabRsp
+}
+
+func (ss *Strategy) Alive() bool {
+	return ss.t != nil && ss.t.Alive()
+}
+
+func (ss *Strategy) Err() error {
+	if ss.t == nil || ss.t.Err() == tomb.ErrStillAlive {
+		return nil
+	}
+	return ss.t.Err()
+}
+
 // Shutdown disconnects all servers in this server strategy.
 func (ss *Strategy) Shutdown(err error) error {
-	for _, s := range ss.Servers {
+	for _, s := range ss.servers {
 		// TODO(negz): Log errors.
-		s.Shutdown()
+		s.Shutdown(err)
 	}
 	ss.t.Kill(err)
 	return ss.t.Wait()

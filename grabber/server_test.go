@@ -1,109 +1,180 @@
 package grabber
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
-	"io"
-	"strings"
-	"sync"
+	"math/rand"
 	"testing"
 	"time"
 
-	"github.com/negz/grabby/nntp"
+	"gopkg.in/tomb.v2"
 
-	upstreamNNTP "github.com/willglynn/nntp"
+	"github.com/negz/grabby/nntp"
+	"github.com/negz/grabby/util"
 )
 
-// fc satisfies nntp.conner, but doesn't do much else.
-type fc struct {
-	// TODO(negz): Dedupe this with the nntp_test implementation.
+const Day time.Duration = time.Hour * 24
+
+type fakeNNTPServer struct {
+	addr     string
+	err      error
+	sessions int
+	greq     chan *nntp.GrabRequest
+	grsp     chan *nntp.GrabResponse
+	t        *tomb.Tomb
 }
 
-func (c *fc) Authenticate(u, p string) error {
+func (fs *fakeNNTPServer) Address() string {
+	return fs.addr
+}
+
+func (fs *fakeNNTPServer) TLS() bool {
+	return false
+}
+
+func (fs *fakeNNTPServer) Username() string {
+	return "dick.t.butt"
+}
+
+func (fs *fakeNNTPServer) HandleGrabs() error {
+	if fs.Alive() {
+		return nil
+	}
+
+	fs.t = new(tomb.Tomb)
+	for i := 0; i < fs.sessions; i++ {
+		fs.t.Go(func() error {
+			for {
+				select {
+				case <-fs.t.Dying():
+					return nil
+				case req := <-fs.greq:
+					var err error
+					switch rand.Int() % 60 {
+					case 1:
+						err = nntp.NoSuchArticleError
+					case 2:
+						err = nntp.NoSuchGroupError
+					case 3:
+						err = fmt.Errorf("I'm an unhandled error!")
+					}
+					fs.grsp <- &nntp.GrabResponse{
+						req,
+						rand.Int63n(100) + 680,
+						2 * time.Second,
+						err,
+					}
+				}
+			}
+		})
+	}
 	return nil
 }
 
-func (c *fc) EnableCompression() error {
-	return nil
+func (fs *fakeNNTPServer) Grab(g *nntp.GrabRequest) {
+	fs.greq <- g
 }
 
-func (c *fc) Group(g string) (*upstreamNNTP.Group, error) {
-	return nil, nil
+func (fs *fakeNNTPServer) Grabbed() <-chan *nntp.GrabResponse {
+	return fs.grsp
 }
 
-func (c *fc) Body(id string) (io.Reader, error) {
-	return strings.NewReader(id), nil
+func (fs *fakeNNTPServer) Alive() bool {
+	return fs.t != nil && fs.t.Alive()
 }
 
-func (c *fc) Quit() error {
-	return nil
+func (fs *fakeNNTPServer) Err() error {
+	return fs.t.Err()
 }
 
-func fakeDial(s *nntp.Server) (*nntp.Session, error) {
-	return nntp.NewSession(&fc{}), nil
+func (fs *fakeNNTPServer) Shutdown(err error) error {
+	fs.t.Kill(err)
+	return fs.t.Wait()
 }
 
-func fakeServer(host string, ms int) *Server {
-	nntps, _ := nntp.NewServer(host, 119, ms, nntp.SessionDialer(fakeDial))
-	return &Server{Server: nntps, Name: fmt.Sprint(nntps), rateMx: new(sync.Mutex)}
+func newFakeNNTPServer(a string, s int) nntp.Serverer {
+	return &fakeNNTPServer{
+		addr:     a,
+		sessions: s,
+		greq:     make(chan *nntp.GrabRequest, s),
+		grsp:     make(chan *nntp.GrabResponse, s),
+	}
 }
 
 var serverTests = []struct {
-	servers   []*Server
-	bytes     []int64
-	durations []time.Duration
-	rate      float64
+	servers []nntp.Serverer
+	options [][]ServerOption
 }{
 	{
-		[]*Server{
-			fakeServer("prio1.nntp.fake", 3),
-			fakeServer("prio2.nntp.fake", 2),
-			fakeServer("prio3.nntp.fake", 1),
+		[]nntp.Serverer{newFakeNNTPServer("nntp1.fake:119", 5)},
+		[][]ServerOption{
+			[]ServerOption{Retention(1000 * Day), MustBeInGroup()},
 		},
-		[]int64{700, 750, 700},
-		[]time.Duration{time.Second * 10, time.Second * 8, time.Second * 7},
-		90.9375,
 	},
 	{
-		[]*Server{
-			fakeServer("prio1.nntp.fake", 10),
-			fakeServer("prio2.nntp.fake", 10),
-			fakeServer("prio3.nntp.fake", 5),
+		[]nntp.Serverer{newFakeNNTPServer("nntp1.fake:119", 30)},
+		[][]ServerOption{
+			[]ServerOption{Retention(10 * Day)},
 		},
-		[]int64{1000, 1000, 1000},
-		[]time.Duration{time.Second * 10, time.Second * 10, time.Second * 10},
-		100.0,
 	},
 	{
-		[]*Server{
-			fakeServer("prio1.nntp.fake", 1),
+		[]nntp.Serverer{
+			newFakeNNTPServer("nntp1.fake:119", 20),
+			newFakeNNTPServer("nntp2.fake:119", 10),
+			newFakeNNTPServer("nntp2.fake:119", 5),
 		},
-		[]int64{1000},
-		[]time.Duration{time.Second * 200},
-		5.0,
+		[][]ServerOption{
+			[]ServerOption{Retention(3 * Day)},
+			[]ServerOption{MustBeInGroup()},
+			[]ServerOption{Retention(1000 * Day)},
+		},
 	},
 }
 
 func TestServer(t *testing.T) {
+	t.Parallel()
 	for _, tt := range serverTests {
-		ss, err := NewStrategy(tt.servers)
+		servers := make([]Serverer, 0, len(tt.servers))
+		for i, ns := range tt.servers {
+			s, err := NewServer(ns, ns.Address(), tt.options[i]...)
+			if err != nil {
+				t.Fatalf("NewServer(%#v, %#v, %#v): %v", ns, ns.Address(), tt.options[i], err)
+			}
+			servers = append(servers, s)
+		}
+		ss, err := NewStrategy(servers)
 		if err != nil {
-			t.Errorf("NewStrategy(%+v): %v", tt.servers, err)
+			t.Fatalf("NewStrategy(%+v): %v", servers, err)
 		}
 		ss.Connect()
 
-		for i, s := range ss.Servers {
-			sentRsp := &nntp.ArticleResponse{Bytes: tt.bytes[i], Duration: tt.durations[i]}
-			s.ArticleRsp <- sentRsp
-			recvRsp := <-ss.ArticleRsp
-			if recvRsp != sentRsp {
-				t.Errorf("<-%v.ArticleRsp == %+v, want %+v ", ss, recvRsp, sentRsp)
+		for i := 0; i < 1000; i++ {
+			s := ss.Servers()[rand.Intn(len(ss.Servers()))]
+			id := util.HashBytes([]byte{byte(rand.Int())})
+			s.Grab(&nntp.GrabRequest{"alt.dick.butts", id, new(bytes.Buffer)})
+			rsp := <-ss.Grabbed()
+			if rsp.ID != id {
+				t.Errorf("ss.Grabbed() rsp.ID == %v, want %v", rsp.ID, id)
 			}
 		}
 
-		if ss.rate != tt.rate {
-			t.Errorf("ss.rate == %f, want %f", ss.rate, tt.rate)
-		}
-
 		ss.Shutdown(nil)
+		if ss.DownloadRate() < 340 || ss.DownloadRate() > 390 {
+			t.Errorf("ss.DownloadRate == %v, want 340 < actual > 390", ss.DownloadRate())
+		}
+		for _, s := range ss.Servers() {
+			if s.DownloadRate() < 340 || s.DownloadRate() > 390 {
+				t.Errorf("s.DownloadRate == %v, want 340 < actual > 390", s.DownloadRate())
+			}
+		}
+		ss.Connect()
+		shutdownErr := errors.New("hi!")
+		if err = ss.Shutdown(shutdownErr); err != shutdownErr {
+			t.Errorf("ss.Shutdown(%v): %v, want %v", shutdownErr, err, shutdownErr)
+		}
+		if ss.Err() != shutdownErr {
+			t.Errorf("ss.Err(): %v, want %v", ss.Err(), shutdownErr)
+		}
 	}
 }

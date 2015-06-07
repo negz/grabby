@@ -2,68 +2,23 @@ package grabber
 
 import (
 	"bytes"
-	"fmt"
 	"io"
+	"log"
 	"math/rand"
-	"strings"
-	"sync"
+	"regexp"
 	"testing"
 	"time"
 
 	"github.com/negz/grabby/decode/yenc"
 	"github.com/negz/grabby/nntp"
 	"github.com/negz/grabby/nzb"
-
-	upstreamNNTP "github.com/willglynn/nntp"
 )
 
-type fakeErroreyConn struct {
-}
-
-func (c *fakeErroreyConn) Authenticate(u, p string) error {
-	return nil
-}
-
-func (c *fakeErroreyConn) EnableCompression() error {
-	return nil
-}
-
-func (c *fakeErroreyConn) Group(g string) (*upstreamNNTP.Group, error) {
-	if rand.Int()%2 == 1 {
-		return nil, upstreamNNTP.Error{Code: 411, Msg: "LOL NO GROUP"}
-	}
-	return nil, nil
-}
-
-func (c *fakeErroreyConn) Body(id string) (io.Reader, error) {
-	switch rand.Int() % 20 {
-	case 1:
-		return nil, upstreamNNTP.Error{Code: 430, Msg: "LOL NO ARTICLE"}
-	case 2:
-		return nil, fmt.Errorf("I'm an unhandled error!")
-	}
-	time.Sleep(time.Second * time.Duration((rand.Int() % 4)))
-	return strings.NewReader(id), nil
-}
-
-func (c *fakeErroreyConn) Quit() error {
-	return nil
-}
-
-func fakeErroreyDial(s *nntp.Server) (*nntp.Session, error) {
-	return nntp.NewSession(&fakeErroreyConn{}), nil
-}
-
-func fakeErroreyServer(host string, ms int) *Server {
-	nntps, _ := nntp.NewServer(host, 119, ms, nntp.SessionDialer(fakeErroreyDial))
-	return &Server{Server: nntps, Name: fmt.Sprint(nntps), MustBeInGroup: true, rateMx: new(sync.Mutex)}
-}
-
-type fakeFile struct {
+type fakeOut struct {
 	*bytes.Buffer
 }
 
-func (ff *fakeFile) Close() error {
+func (ff *fakeOut) Close() error {
 	return nil
 }
 
@@ -81,71 +36,184 @@ func createFakeErroreyDecoder(w io.Writer) io.Writer {
 	return w
 }
 
-func createFakeFile(s *Segment) (io.WriteCloser, error) {
-	return &fakeFile{Buffer: new(bytes.Buffer)}, nil
+func createFakeOut(g Grabberer, s Segmenter) (io.WriteCloser, error) {
+	return &fakeOut{Buffer: new(bytes.Buffer)}, nil
 }
 
 var grabberTests = []struct {
-	s        []*Server
-	f        string
-	metadata int
-	files    int
-	name     string
+	servers       []nntp.Serverer
+	options       [][]ServerOption
+	f             string
+	filters       []*regexp.Regexp
+	metadata      int
+	files         int
+	par2Files     int
+	filteredFiles int
+	pausedFiles   int
+	name          string
 }{
 	{
-		s: []*Server{
-			fakeErroreyServer("nntp.fake1", 1),
-		},
-		f:        "testdata/ubuntu-14.04.2-desktop-amd64.nzb",
-		metadata: 2,
-		files:    15,
-		name:     "ubuntu-14.04.2-desktop-amd64",
+		servers:       []nntp.Serverer{newFakeNNTPServer("nntp1.fake:119", 5)},
+		options:       [][]ServerOption{[]ServerOption{Retention(1000 * Day), MustBeInGroup()}},
+		f:             "testdata/ubuntu-14.04.2-desktop-amd64.nzb",
+		filters:       []*regexp.Regexp{regexp.MustCompile(`(?i).+\.(sfv|nfo|nzb).*`)},
+		metadata:      2,
+		files:         115,
+		par2Files:     15,
+		filteredFiles: 2,
+		pausedFiles:   17,
+		name:          "ubuntu-14.04.2-desktop-amd64",
 	},
 	{
-		s: []*Server{
-			fakeErroreyServer("nntp.fake1", 30),
-			fakeErroreyServer("nntp.fake2", 10),
-			fakeErroreyServer("nntp.fake3", 5),
-		},
-		f:        "testdata/ubuntu-14.04.2-desktop-amd64.nzb",
-		metadata: 2,
-		files:    15,
-		name:     "ubuntu-14.04.2-desktop-amd64",
+		servers:     []nntp.Serverer{newFakeNNTPServer("nntp1.fake:119", 30)},
+		options:     [][]ServerOption{[]ServerOption{Retention(1000 * Day)}},
+		f:           "testdata/ubuntu-14.04.2-desktop-amd64.nzb",
+		metadata:    2,
+		files:       115,
+		par2Files:   15,
+		pausedFiles: 15,
+		name:        "ubuntu-14.04.2-desktop-amd64",
 	},
 	{
-		s: []*Server{
-			fakeErroreyServer("nntp.fake1", 2),
-			fakeErroreyServer("nntp.fake2", 1),
-			fakeErroreyServer("nntp.fake3", 3),
+		servers: []nntp.Serverer{
+			newFakeNNTPServer("nntp1.fake:119", 20),
+			newFakeNNTPServer("nntp2.fake:119", 10),
+			newFakeNNTPServer("nntp2.fake:119", 5),
 		},
-		f:        "testdata/ubuntu-14.04.2-desktop-amd64.nzb",
-		metadata: 2,
-		files:    15,
-		name:     "ubuntu-14.04.2-desktop-amd64",
+		options: [][]ServerOption{
+			[]ServerOption{Retention(3 * Day)},
+			[]ServerOption{MustBeInGroup()},
+			[]ServerOption{Retention(1000 * Day)},
+		},
+		f:           "testdata/ubuntu-14.04.2-desktop-amd64.nzb",
+		metadata:    2,
+		files:       115,
+		par2Files:   15,
+		pausedFiles: 15,
+		name:        "ubuntu-14.04.2-desktop-amd64",
 	},
 }
 
+func GrabberDone(g Grabberer) bool {
+	tick := time.NewTicker(15 * time.Second)
+	defer tick.Stop()
+
+	for {
+		select {
+		case <-tick.C:
+			return false
+		case <-g.PostProcessable():
+			return true
+		}
+	}
+}
+
 func TestGrabber(t *testing.T) {
+	t.Parallel()
 	for _, tt := range grabberTests {
-		ss, err := NewStrategy(tt.s)
+		servers := make([]Serverer, 0, len(tt.servers))
+		for i, ns := range tt.servers {
+			s, err := NewServer(ns, ns.Address(), tt.options[i]...)
+			if err != nil {
+				t.Fatalf("NewServer(%#v, %#v, %#v): %v", ns, ns.Address(), tt.options[i], err)
+			}
+			servers = append(servers, s)
+		}
+		ss, err := NewStrategy(servers)
 		if err != nil {
-			t.Errorf("NewStrategy(%+v): %v", tt.s, err)
+			t.Fatalf("NewStrategy(%+v): %v", servers, err)
 		}
 
 		n, err := nzb.NewFromFile(tt.f)
 		if err != nil {
-			t.Errorf("nzb.NewFromFile(%v): %v", tt.f, err)
+			t.Fatalf("nzb.NewFromFile(%v): %v", tt.f, err)
 			continue
 		}
 
 		g, err := New(
 			"/tmp",
 			ss,
-			FromNZB(n),
+			FromNZB(n, tt.filters...),
 			Decoder(createFakeErroreyDecoder),
-			SegmentFileCreator(createFakeFile),
+			SegmentFileCreator(createFakeOut),
 		)
-		g.Grab()
+
+		if g.Name() != tt.name {
+			t.Errorf("g.Name == %v, wanted %v", g.Name(), tt.name)
+		}
+
+		if len(g.Metadata()) != tt.metadata {
+			t.Errorf("%v len(g.Metadata) == %v, wanted %v", g.Name(), len(g.Metadata()), tt.metadata)
+		}
+		if len(g.Files()) != tt.files {
+			t.Errorf("%v len(g.Files) == %v, wanted %v", g.Name(), len(g.Files()), tt.files)
+		}
+
+		par2Files, filteredFiles, pausedFiles := 0, 0, 0
+		for _, f := range g.Files() {
+			if f.IsPar2() {
+				par2Files++
+			}
+			if f.IsFiltered() {
+				filteredFiles++
+			}
+			if f.State() == Paused {
+				pausedFiles++
+			}
+		}
+
+		if par2Files != tt.par2Files {
+			t.Errorf("%v par2Files == %v, wanted %v", g.Name(), par2Files, tt.par2Files)
+		}
+		if filteredFiles != tt.filteredFiles {
+			t.Errorf("%v filteredFiles == %v, wanted %v", g.Name(), filteredFiles, tt.filteredFiles)
+		}
+		if pausedFiles != tt.pausedFiles {
+			t.Errorf("%v pausedFiles == %v, wanted %v", g.Name(), pausedFiles, tt.pausedFiles)
+		}
+
+		g.HandleGrabs()
+
+		log.Printf("GrabAll()")
+		if err := g.GrabAll(); err != nil {
+			t.Errorf("%v g.GrabAll(): %v", g.Name(), err)
+		}
+
+		log.Printf("Pause()")
+		if err := g.Pause(); err != nil {
+			t.Errorf("%v g.Pause(): %v", g.Name(), err)
+		}
+
+		//TODO(negz): Debug sporadic resume bug. Smells like fighting mutexes.
+		log.Printf("Resume()")
+		if err := g.Resume(); err != nil {
+			t.Errorf("%v g.Resume(): %v", g.Name(), err)
+		}
+
+		if !GrabberDone(g) {
+			t.Errorf("%v timed out waiting to become postprocessable", g.Name())
+			g.Shutdown(nil)
+			for _, f := range g.Files() {
+				t.Logf("File state: %v", f.State())
+			}
+			continue
+		}
+		log.Printf("Became postprocessable.")
+
+		log.Printf("Grabbing par2 files")
+		for _, f := range g.Files() {
+			if f.IsPar2() {
+				if err := g.GrabFile(f); err != nil {
+					t.Errorf("%v g.GrabFile(%v): %v", g.Name(), f, err)
+				}
+			}
+		}
+
+		if !GrabberDone(g) {
+			t.Errorf("%v timed out waiting to become postprocessable after requesting additional par2 files", g.Name())
+		}
+		log.Printf("Became postprocessable after requesting par2 files.")
+
 		g.Shutdown(nil)
 	}
 }
