@@ -129,6 +129,34 @@ func (s *Server) newSession() (Sessioner, error) {
 	return sn, nil
 }
 
+func (s *Server) handleGrabs(sn Sessioner) {
+	s.t.Go(func() error {
+		for {
+			select {
+			case req := <-s.gReq:
+				start := time.Now()
+				bytes, err := sn.WriteArticleBody(req.Group, req.ID, req.WriteTo)
+				switch {
+				case IsNNTPProtocolError(err):
+					return err
+				case IsNoSuchGroupNNTPError(err):
+					err = NoSuchGroupError
+				case IsNoSuchArticleNNTPError(err):
+					err = NoSuchArticleError
+				}
+				s.gRsp <- &GrabResponse{
+					GrabRequest: req,
+					Bytes:       bytes,
+					Duration:    time.Since(start),
+					Error:       err,
+				}
+			case <-s.t.Dying():
+				return nil
+			}
+		}
+	})
+}
+
 // HandleGrabs uses a Server's sessions to fulfill GrabRequests.
 // All sessions will be quit if any one session becomes unhealthy.
 func (s *Server) HandleGrabs() error {
@@ -148,31 +176,7 @@ func (s *Server) HandleGrabs() error {
 	// Tombs cannot be re-used once they have died, so we create a new one here.
 	s.t = new(tomb.Tomb)
 	for _, sn := range s.sessions {
-		s.t.Go(func() error {
-			for {
-				select {
-				case req := <-s.gReq:
-					start := time.Now()
-					bytes, err := sn.WriteArticleBody(req.Group, req.ID, req.WriteTo)
-					switch {
-					case IsNNTPProtocolError(err):
-						return err
-					case IsNoSuchGroupNNTPError(err):
-						err = NoSuchGroupError
-					case IsNoSuchArticleNNTPError(err):
-						err = NoSuchArticleError
-					}
-					s.gRsp <- &GrabResponse{
-						GrabRequest: req,
-						Bytes:       bytes,
-						Duration:    time.Since(start),
-						Error:       err,
-					}
-				case <-s.t.Dying():
-					return nil
-				}
-			}
-		})
+		s.handleGrabs(sn)
 	}
 	return nil
 }
