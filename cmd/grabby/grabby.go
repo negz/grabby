@@ -1,74 +1,29 @@
 package main
 
 import (
-	"fmt"
 	"log"
-	"os"
-	"path/filepath"
-	"regexp"
-	"strings"
-	"sync"
 	"time"
 
-	"github.com/negz/grabby/decode/yenc"
+	"github.com/pivotal-golang/bytefmt"
+	"gopkg.in/alecthomas/kingpin.v1"
+
+	"github.com/negz/grabby/grabber"
 	"github.com/negz/grabby/nntp"
 	"github.com/negz/grabby/nzb"
 	"github.com/negz/grabby/util"
-	"github.com/pivotal-golang/bytefmt"
-	"gopkg.in/alecthomas/kingpin.v1"
 )
 
-func outFile(path, nzb, subject string, segment int) string {
-	m := regexp.MustCompile(`(?i).+\.(vol[\d\+]+\.par2).*`).FindStringSubmatch(subject)
-	if len(m) > 1 {
-		return filepath.Join(path, fmt.Sprintf("%v.%v.%v.%04d", nzb, util.HashString(subject), m[1], segment))
-	}
-	if strings.Contains(subject, ".par2") {
-		return filepath.Join(path, fmt.Sprintf("%v.%v.par2.%04d", nzb, util.HashString(subject), segment))
-	}
-	return filepath.Join(path, fmt.Sprintf("%v.%v.%04d", nzb, util.HashString(subject), segment))
-}
+const Day time.Duration = time.Hour * 24
 
-func queueSegments(grabbers *sync.WaitGroup, nzbfile, out string, req chan<- *nntp.ArticleRequest) {
-	n, err := nzb.NewFromFile(nzbfile)
-	if err != nil {
-		log.Fatalf("Error parsing NZB %v: %v", nzbfile, err)
-	}
-
-	for _, file := range n.Files {
-		for _, group := range file.Groups {
-			for _, segment := range file.Segments {
-				fp := outFile(out, n.Filename, file.Subject, segment.Number)
-				of, err := os.Create(fp)
-				if err != nil {
-					log.Fatalf("unable to create output file %v: %v", fp, err)
-				}
-				defer of.Close()
-				req <- &nntp.ArticleRequest{Group: group, ID: segment.ArticleID, WriteTo: yenc.NewDecoder(of)}
-			}
-		}
-	}
-	close(req)
-	// Wait for grabbers to be done before closing output files.
-	grabbers.Wait()
-}
-
-func displayProgress(st time.Time, resp <-chan *nntp.ArticleResponse) {
-	var tb int64 = 0
+func watchGrabber(g grabber.Grabberer) {
+	tick := time.NewTicker(3 * time.Second)
+	defer tick.Stop()
 	for {
 		select {
-		case r := <-resp:
-			if r.Error != nil {
-				log.Printf("Error getting article %v: %v", r.ID, r.Error)
-			}
-			tb += r.Bytes
-		default:
-			d := time.Since(st)
-			rate := float64(tb) / d.Seconds()
-			log.Printf(
-				"Downloaded %v (%v/s)",
-				bytefmt.ByteSize(uint64(tb)), bytefmt.ByteSize(uint64(rate)))
-			time.Sleep(time.Second)
+		case <-tick.C:
+			log.Printf("Downloading at %v", bytefmt.ByteSize(uint64(g.Strategy().DownloadRate())))
+		case <-g.PostProcessable():
+			return
 		}
 	}
 }
@@ -78,38 +33,63 @@ func main() {
 	var (
 		server      = kingpin.Flag("server", "Usenet server hostname").Short('s').Required().String()
 		username    = kingpin.Flag("username", "Usenet server username").Short('u').Required().String()
-		connections = kingpin.Flag("connections", "Usenet max connections").Short('c').Required().Int()
 		passfile    = kingpin.Flag("passfile", "Usenet server password file").Short('p').Required().ExistingFile()
+		connections = kingpin.Flag("connections", "Usenet max connections").Short('c').Default("1").Int()
+		retention   = kingpin.Flag("retention", "Usenet retention in days. 0 for unlimited.").Short('r').Default("0").Int()
+		needsgroup  = kingpin.Flag("switchgroup", "Send GROUP before getting article").Short('g').Default("false").Bool()
 		nzbfile     = kingpin.Arg("nzb", "NZB file to download").Required().ExistingFile()
 		outdir      = kingpin.Arg("outdir", "File to download to").Required().ExistingDir()
 	)
 	kingpin.Parse()
+
+	n, err := nzb.NewFromFile(*nzbfile)
+	if err != nil {
+		log.Fatalf("Unable to open NZB file: %v", err)
+	}
+
+	o := make([]grabber.ServerOption, 0)
+	if *retention > 0 {
+		o = append(o, grabber.Retention(time.Duration(*retention)*Day))
+	}
+	if *needsgroup {
+		o = append(o, grabber.MustBeInGroup())
+	}
 
 	password, err := util.PasswordFromFile(*passfile)
 	if err != nil {
 		log.Fatalf("Couldn't read password from %v", *passfile)
 	}
 
-	// Connect to server
-	s := nntp.NewServer(*server, 119, false, *username, password, *connections)
-
-	// Do the grabbening
-	grabbers := new(sync.WaitGroup)
-	req := make(chan *nntp.ArticleRequest, s.MaxSessions)
-	resp := make(chan *nntp.ArticleResponse, s.MaxSessions)
-	startTime := time.Now()
-	for i := 0; i < s.MaxSessions; i++ {
-		sn, err := nntp.NewSession(s, nntp.Dial)
-		if err != nil {
-			log.Printf("Failed to create new session for %v: %v", s, err)
-			continue
-		}
-		defer sn.Quit()
-		grabbers.Add(1)
-		go sn.Grab(grabbers, req, resp)
+	nntpServer, err := nntp.NewServer(*server, 119, *connections, nntp.Credentials(*username, password))
+	if err != nil {
+		log.Fatalf("Error setting up strategy: %v", err)
 	}
-	go queueSegments(grabbers, *nzbfile, *outdir, req)
-	go displayProgress(startTime, resp)
-	grabbers.Wait()
-	log.Println("Finished!")
+
+	grabServer, err := grabber.NewServer(nntpServer, *server, o...)
+	if err != nil {
+		log.Fatalf("Error setting up strategy: %v", err)
+	}
+
+	grabStrategy, err := grabber.NewStrategy([]grabber.Serverer{grabServer})
+	if err != nil {
+		log.Fatalf("Error setting up strategy: %v", err)
+	}
+
+	g, err := grabber.New(*outdir, grabStrategy, grabber.FromNZB(n))
+	if err != nil {
+		log.Fatalf("Unable to setup grabber: %v", err)
+	}
+
+	g.HandleGrabs()
+
+	if err := g.GrabAll(); err != nil {
+		log.Fatalf("Unable to grab all the things: %v", err)
+	}
+
+	watchGrabber(g)
+
+	if err := g.Shutdown(nil); err != nil {
+		log.Fatalf("Unable to shutdown grabber: %v", err)
+	}
+
 }
