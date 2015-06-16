@@ -3,7 +3,6 @@ package grabber
 import (
 	"bytes"
 	"io"
-	"log"
 	"math/rand"
 	"regexp"
 	"testing"
@@ -174,18 +173,15 @@ func TestGrabber(t *testing.T) {
 
 		g.HandleGrabs()
 
-		log.Printf("GrabAll()")
 		if err := g.GrabAll(); err != nil {
 			t.Errorf("%v g.GrabAll(): %v", g.Name(), err)
 		}
 
-		log.Printf("Pause()")
 		if err := g.Pause(); err != nil {
 			t.Errorf("%v g.Pause(): %v", g.Name(), err)
 		}
 
 		//TODO(negz): Debug sporadic resume bug. Smells like fighting mutexes.
-		log.Printf("Resume()")
 		if err := g.Resume(); err != nil {
 			t.Errorf("%v g.Resume(): %v", g.Name(), err)
 		}
@@ -198,9 +194,7 @@ func TestGrabber(t *testing.T) {
 			}
 			continue
 		}
-		log.Printf("Became postprocessable.")
 
-		log.Printf("Grabbing par2 files")
 		for _, f := range g.Files() {
 			if f.IsPar2() {
 				if err := g.GrabFile(f); err != nil {
@@ -212,7 +206,6 @@ func TestGrabber(t *testing.T) {
 		if !GrabberDone(g) {
 			t.Errorf("%v timed out waiting to become postprocessable after requesting additional par2 files", g.Name())
 		}
-		log.Printf("Became postprocessable after requesting par2 files.")
 
 		g.Shutdown(nil)
 	}
