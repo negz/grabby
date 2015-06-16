@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"time"
 
 	"gopkg.in/tomb.v2"
 )
@@ -31,9 +30,8 @@ type GrabRequest struct {
 // io.Reader or an error.
 type GrabResponse struct {
 	*GrabRequest
-	Bytes    int64
-	Duration time.Duration
-	Error    error
+	Bytes int64
+	Error error
 }
 
 type Serverer interface {
@@ -134,7 +132,6 @@ func (s *Server) handleGrabs(sn Sessioner) {
 		for {
 			select {
 			case req := <-s.gReq:
-				start := time.Now()
 				bytes, err := sn.WriteArticleBody(req.Group, req.ID, req.WriteTo)
 				switch {
 				case IsNNTPProtocolError(err):
@@ -147,7 +144,6 @@ func (s *Server) handleGrabs(sn Sessioner) {
 				s.gRsp <- &GrabResponse{
 					GrabRequest: req,
 					Bytes:       bytes,
-					Duration:    time.Since(start),
 					Error:       err,
 				}
 			case <-s.t.Dying():

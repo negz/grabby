@@ -26,7 +26,7 @@ type Serverer interface {
 	Retention() time.Duration
 	MustBeInGroup() bool
 	DownloadRate() float64
-	UpdateRate(seconds float64, bytes int64)
+	UpdateRate(bytes int64)
 }
 
 // A Server wraps an nntp.Server with grabber level state information.
@@ -35,6 +35,8 @@ type Server struct {
 	name       string
 	retention  time.Duration
 	needsGroup bool
+	bytes      int64
+	started    time.Time
 	rate       float64
 	rateMx     sync.Locker
 }
@@ -61,6 +63,7 @@ func NewServer(ns nntp.Serverer, name string, so ...ServerOption) (Serverer, err
 		name:       name,
 		retention:  time.Duration(0),
 		needsGroup: true,
+		started:    time.Now(),
 		rateMx:     new(sync.Mutex),
 	}
 
@@ -91,10 +94,12 @@ func (s *Server) DownloadRate() float64 {
 	return s.rate
 }
 
-func (s *Server) UpdateRate(seconds float64, bytes int64) {
+func (s *Server) UpdateRate(bytes int64) {
 	s.rateMx.Lock()
 	defer s.rateMx.Unlock()
-	s.rate = util.UpdateDownloadRate(rateDecay, s.rate, seconds, bytes)
+
+	s.bytes += bytes
+	s.rate = util.UpdateDownloadRate(rateDecay, s.rate, time.Since(s.started).Seconds(), s.bytes)
 }
 
 type Strategizer interface {
@@ -112,6 +117,8 @@ type Strategizer interface {
 type Strategy struct {
 	servers []Serverer
 	retry   time.Duration
+	started time.Time
+	bytes   int64
 	rate    float64
 	rateMx  sync.Locker
 	grabRsp chan *AggregatedGrabResponse
@@ -136,6 +143,7 @@ func NewStrategy(servers []Serverer, so ...StrategyOption) (Strategizer, error) 
 	st := &Strategy{
 		servers: servers,
 		retry:   30 * time.Second,
+		started: time.Now(),
 		rateMx:  new(sync.Mutex),
 		grabRsp: make(chan *AggregatedGrabResponse, cb),
 	}
@@ -158,10 +166,12 @@ func (ss *Strategy) DownloadRate() float64 {
 	return ss.rate
 }
 
-func (ss *Strategy) updateRate(seconds float64, bytes int64) {
+func (ss *Strategy) updateRate(bytes int64) {
 	ss.rateMx.Lock()
 	defer ss.rateMx.Unlock()
-	ss.rate = util.UpdateDownloadRate(rateDecay, ss.rate, seconds, bytes)
+
+	ss.bytes += bytes
+	ss.rate = util.UpdateDownloadRate(rateDecay, ss.rate, time.Since(ss.started).Seconds(), ss.bytes)
 }
 
 func (ss *Strategy) aggregateResponses(s Serverer) {
@@ -169,8 +179,8 @@ func (ss *Strategy) aggregateResponses(s Serverer) {
 		for {
 			select {
 			case rsp := <-s.Grabbed():
-				s.UpdateRate(rsp.Duration.Seconds(), rsp.Bytes)
-				ss.updateRate(rsp.Duration.Seconds(), rsp.Bytes)
+				s.UpdateRate(rsp.Bytes)
+				ss.updateRate(rsp.Bytes)
 				ss.grabRsp <- &AggregatedGrabResponse{rsp, s}
 			case <-ss.t.Dying():
 				return nil
