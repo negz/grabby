@@ -2,7 +2,6 @@ package grabber
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -29,7 +28,7 @@ var (
 type SegFileCreator func(g Grabberer, s Segmenter) (io.WriteCloser, error)
 
 func createSegmentFile(g Grabberer, s Segmenter) (io.WriteCloser, error) {
-	return os.Create(filepath.Join(g.WorkDir(), fmt.Sprintf("%v.%08d", g.Hash(), s.Number())))
+	return os.Create(filepath.Join(g.WorkDir(), s.WorkingFilename()))
 }
 
 type Grabberer interface {
@@ -51,6 +50,7 @@ type Grabberer interface {
 
 type Grabber struct {
 	name        string
+	hash        string
 	wd          string
 	meta        []Metadataer
 	files       []Filer
@@ -67,7 +67,6 @@ type Grabber struct {
 	doneMx      sync.Locker
 	pp          chan bool
 	maxRetry    int
-	hasher      func(string) string
 	decoder     func(io.Writer) io.Writer
 	fileCreator SegFileCreator
 	grabT       *tomb.Tomb
@@ -101,13 +100,6 @@ func FromNZB(n *nzb.NZB, filter ...*regexp.Regexp) GrabberOption {
 func Name(n string) GrabberOption {
 	return func(g *Grabber) error {
 		g.name = n
-		return nil
-	}
-}
-
-func Hasher(h func(string) string) GrabberOption {
-	return func(g *Grabber) error {
-		g.hasher = h
 		return nil
 	}
 }
@@ -148,7 +140,6 @@ func New(wd string, ss Strategizer, gro ...GrabberOption) (*Grabber, error) {
 		maxRetry:    3,
 		doneMx:      new(sync.Mutex),
 		pp:          make(chan bool),
-		hasher:      util.HashString,
 		decoder:     yenc.NewDecoder, // TODO(negz): Detect encoding.
 		fileCreator: createSegmentFile,
 		grabT:       new(tomb.Tomb),
@@ -162,6 +153,7 @@ func New(wd string, ss Strategizer, gro ...GrabberOption) (*Grabber, error) {
 	if g.name == "" {
 		return nil, MissingNameError
 	}
+	g.hash = util.HashString(g.name)
 	return g, nil
 }
 
@@ -262,7 +254,7 @@ func (g *Grabber) Name() string {
 }
 
 func (g *Grabber) Hash() string {
-	return g.hasher(g.name)
+	return g.hash
 }
 
 func (g *Grabber) WorkDir() string {

@@ -2,11 +2,13 @@ package grabber
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"time"
 
 	"github.com/negz/grabby/nzb"
+	"github.com/negz/grabby/util"
 )
 
 var (
@@ -18,6 +20,8 @@ type Segmenter interface {
 	FSM
 	ID() string
 	Number() int
+	Hash() string
+	WorkingFilename() string
 	Posted() time.Time
 	Groups() []string
 	WriteTo(w io.WriteCloser)
@@ -163,6 +167,14 @@ func (s *Segment) ID() string {
 
 func (s *Segment) Number() int {
 	return s.ns.Number
+}
+
+func (s *Segment) Hash() string {
+	return util.HashString(s.ns.ArticleID)
+}
+
+func (s *Segment) WorkingFilename() string {
+	return fmt.Sprintf("%v.%08d", s.f.Hash(), s.Number())
 }
 
 func (s *Segment) Posted() time.Time {

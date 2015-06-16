@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/negz/grabby/nzb"
+	"github.com/negz/grabby/util"
 )
 
 var par2RE *regexp.Regexp = regexp.MustCompile(`(?i).+\.par2.*`)
@@ -13,6 +14,7 @@ var par2RE *regexp.Regexp = regexp.MustCompile(`(?i).+\.par2.*`)
 type Filer interface {
 	FSM
 	Subject() string
+	Hash() string
 	Poster() string
 	Posted() time.Time
 	Groups() []string
@@ -26,6 +28,7 @@ type Filer interface {
 type File struct {
 	nf         *nzb.File
 	g          Grabberer
+	hash       string
 	segments   []Segmenter
 	state      State
 	writeState sync.Locker
@@ -43,6 +46,7 @@ func NewFile(nf *nzb.File, g Grabberer, filter ...*regexp.Regexp) Filer {
 	f := &File{
 		nf:         nf,
 		g:          g,
+		hash:       util.HashString(nf.Subject),
 		segments:   make([]Segmenter, 0, len(nf.Segments)),
 		writeState: mx,
 		readState:  mx.RLocker(),
@@ -164,6 +168,11 @@ func (f *File) State() State {
 
 func (f *File) Subject() string {
 	return f.nf.Subject
+}
+
+func (f *File) Hash() string {
+	// TODO(negz): UUID instead of hash - no guarantee of unique subjects.
+	return f.hash
 }
 
 func (f *File) Poster() string {

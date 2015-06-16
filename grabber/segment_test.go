@@ -20,6 +20,10 @@ func (ff *fakeFile) Subject() string {
 	return "yEnc: Here guys I yEncoded some dickbutts for you [1/1]"
 }
 
+func (ff *fakeFile) Hash() string {
+	return "SUCHHASH"
+}
+
 func (ff *fakeFile) Poster() string {
 	return "Dick T. Butt"
 }
