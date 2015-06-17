@@ -86,13 +86,21 @@ func FromNZB(n *nzb.NZB, filter ...*regexp.Regexp) GrabberOption {
 			g.meta = append(g.meta, NewMetadata(m, g))
 		}
 
+		var sp2 Filer
+		// TODO(negz): Merge files and knownFile? We don't *really* care about
+		// the order of files.
 		g.files = make([]Filer, 0, len(n.Files))
 		g.knownFile = make(map[Filer]bool)
 		for _, nf := range n.Files {
 			f := NewFile(nf, g, filter...)
 			g.files = append(g.files, f)
 			g.knownFile[f] = true
+			if f.IsPar2() {
+				sp2 = smallestFile(sp2, f)
+			}
 		}
+		sp2.Resume()
+
 		return nil
 	}
 }

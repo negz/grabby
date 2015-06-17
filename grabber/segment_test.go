@@ -10,52 +10,6 @@ import (
 
 var postDate time.Time = time.Date(1985, time.October, 2, 0, 0, 0, 0, time.UTC)
 
-type fakeFile struct {
-	*fakeFSM
-	g []string
-	d int
-}
-
-func (ff *fakeFile) Subject() string {
-	return "yEnc: Here guys I yEncoded some dickbutts for you [1/1]"
-}
-
-func (ff *fakeFile) Hash() string {
-	return "SUCHHASH"
-}
-
-func (ff *fakeFile) Poster() string {
-	return "Dick T. Butt"
-}
-
-func (ff *fakeFile) Posted() time.Time {
-	return postDate
-}
-
-func (ff *fakeFile) Groups() []string {
-	return ff.g
-}
-
-func (ff *fakeFile) Segments() []Segmenter {
-	return []Segmenter{}
-}
-
-func (ff *fakeFile) IsPar2() bool {
-	return false
-}
-
-func (ff *fakeFile) IsFiltered() bool {
-	return false
-}
-
-func (ff *fakeFile) IsRequired() bool {
-	return true
-}
-
-func (ff *fakeFile) SegmentDone() {
-	ff.d++
-}
-
 var segmentTests = []struct {
 	ns  *nzb.Segment
 	g   []string
@@ -73,7 +27,7 @@ var segmentTests = []struct {
 func TestSegment(t *testing.T) {
 	t.Parallel()
 	for _, tt := range segmentTests {
-		f := &fakeFile{fakeFSM: &fakeFSM{s: Pending}, g: tt.g}
+		f := &fakeFile{fakeFSM: &fakeFSM{s: Pending}, g: tt.g, s: []Segmenter{}}
 		s := NewSegment(tt.ns, f)
 
 		if s.ID() != tt.id {

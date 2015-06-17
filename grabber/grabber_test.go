@@ -60,7 +60,7 @@ var grabberTests = []struct {
 		files:         115,
 		par2Files:     15,
 		filteredFiles: 2,
-		pausedFiles:   17,
+		pausedFiles:   16,
 		name:          "ubuntu-14.04.2-desktop-amd64",
 	},
 	{
@@ -70,7 +70,7 @@ var grabberTests = []struct {
 		metadata:    2,
 		files:       115,
 		par2Files:   15,
-		pausedFiles: 15,
+		pausedFiles: 14,
 		name:        "ubuntu-14.04.2-desktop-amd64",
 	},
 	{
@@ -88,7 +88,7 @@ var grabberTests = []struct {
 		metadata:    2,
 		files:       115,
 		par2Files:   15,
-		pausedFiles: 15,
+		pausedFiles: 14,
 		name:        "ubuntu-14.04.2-desktop-amd64",
 	},
 }

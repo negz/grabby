@@ -213,3 +213,10 @@ func (f *File) SegmentDone() {
 		f.Done(nil)
 	}
 }
+
+func smallestFile(s, c Filer) Filer {
+	if (s == nil) || (len(s.Segments()) > len(c.Segments())) {
+		return c
+	}
+	return s
+}
