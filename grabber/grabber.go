@@ -99,7 +99,9 @@ func FromNZB(n *nzb.NZB, filter ...*regexp.Regexp) GrabberOption {
 				sp2 = smallestFile(sp2, f)
 			}
 		}
-		sp2.Resume()
+		if sp2 != nil {
+			sp2.Resume()
+		}
 
 		return nil
 	}
