@@ -38,6 +38,10 @@ func (ff *fakeFile) Segments() []Segmenter {
 	return ff.s
 }
 
+func (ff *fakeFile) SortSegments() {
+	// TOTALLY SORTING YOUR SEGMENTS RIGHT NOW!
+}
+
 func (ff *fakeFile) IsPar2() bool {
 	return false
 }

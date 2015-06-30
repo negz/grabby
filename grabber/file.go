@@ -2,6 +2,7 @@ package grabber
 
 import (
 	"regexp"
+	"sort"
 	"sync"
 	"time"
 
@@ -11,6 +12,12 @@ import (
 
 var par2RE *regexp.Regexp = regexp.MustCompile(`(?i).+\.par2.*`)
 
+type ByNumber []Segmenter
+
+func (b ByNumber) Len() int           { return len(b) }
+func (b ByNumber) Swap(i, j int)      { b[i], b[j] = b[j], b[i] }
+func (b ByNumber) Less(i, j int) bool { return b[i].Number() < b[j].Number() }
+
 type Filer interface {
 	FSM
 	Subject() string
@@ -19,6 +26,7 @@ type Filer interface {
 	Posted() time.Time
 	Groups() []string
 	Segments() []Segmenter
+	SortSegments()
 	IsRequired() bool
 	IsPar2() bool
 	IsFiltered() bool
@@ -189,6 +197,14 @@ func (f *File) Groups() []string {
 
 func (f *File) Segments() []Segmenter {
 	return f.segments
+}
+
+func (f *File) SortSegments() {
+	// Segments are almost always already sorted.
+	if sort.IsSorted(ByNumber(f.segments)) {
+		return
+	}
+	sort.Sort(ByNumber(f.segments))
 }
 
 func (f *File) IsRequired() bool {
