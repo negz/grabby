@@ -10,6 +10,7 @@ import (
 	"github.com/negz/grabby/grabber"
 	"github.com/negz/grabby/nntp"
 	"github.com/negz/grabby/nzb"
+	"github.com/negz/grabby/postprocess"
 	"github.com/negz/grabby/util"
 )
 
@@ -87,6 +88,11 @@ func main() {
 	}
 
 	watchGrabber(g)
+
+	pp := postprocess.New(g.WorkDir())
+	if err := pp.Assemble(g.Files()); err != nil {
+		log.Println(err)
+	}
 
 	if err := g.Shutdown(nil); err != nil {
 		log.Fatalf("Unable to shutdown grabber: %v", err)

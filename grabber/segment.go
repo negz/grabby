@@ -2,7 +2,6 @@ package grabber
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"sync"
 	"time"
@@ -174,7 +173,7 @@ func (s *Segment) Hash() string {
 }
 
 func (s *Segment) WorkingFilename() string {
-	return fmt.Sprintf("%v.%08d", s.f.Hash(), s.Number())
+	return s.Hash()
 }
 
 func (s *Segment) Posted() time.Time {
