@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/negz/grabby/magic"
 	"github.com/negz/grabby/nzb"
 )
 
@@ -11,6 +12,7 @@ type fakeFile struct {
 	*fakeFSM
 	g []string
 	d int
+	t magic.FileType
 	s []Segmenter
 }
 
@@ -42,6 +44,10 @@ func (ff *fakeFile) SortSegments() {
 	// TOTALLY SORTING YOUR SEGMENTS RIGHT NOW!
 }
 
+func (ff *fakeFile) Filename() string {
+	return "dickbutt.rar"
+}
+
 func (ff *fakeFile) IsPar2() bool {
 	return false
 }
@@ -56,6 +62,10 @@ func (ff *fakeFile) IsRequired() bool {
 
 func (ff *fakeFile) SegmentDone() {
 	ff.d++
+}
+
+func (ff *fakeFile) SetFileType(t magic.FileType) {
+	ff.t = t
 }
 
 func TestSmallestFile(t *testing.T) {

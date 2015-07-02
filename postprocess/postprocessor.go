@@ -30,7 +30,7 @@ func New(workdir string) PostProcessorer {
 }
 
 func assembleTo(wd string, f grabber.Filer) (io.WriteCloser, error) {
-	if f.IsPar2() || SmellsLikePar2(wd, f) {
+	if f.IsPar2() {
 		return os.Create(filepath.Join(wd, fmt.Sprintf("%v.par2", f.Hash())))
 	}
 	return os.Create(filepath.Join(wd, f.Hash()))

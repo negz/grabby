@@ -181,7 +181,6 @@ func TestGrabber(t *testing.T) {
 			t.Errorf("%v g.Pause(): %v", g.Name(), err)
 		}
 
-		//TODO(negz): Debug sporadic resume bug. Smells like fighting mutexes.
 		if err := g.Resume(); err != nil {
 			t.Errorf("%v g.Resume(): %v", g.Name(), err)
 		}

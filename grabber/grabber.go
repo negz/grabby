@@ -348,6 +348,7 @@ func (g *Grabber) handleResponses() {
 					continue
 				}
 				s.Done(nil)
+				s.Sniff(g.wd)
 			}
 		}
 	})

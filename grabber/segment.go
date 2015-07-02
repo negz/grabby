@@ -3,9 +3,12 @@ package grabber
 import (
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/negz/grabby/magic"
 	"github.com/negz/grabby/nzb"
 	"github.com/negz/grabby/util"
 )
@@ -30,6 +33,7 @@ type Segmenter interface {
 	SelectGroup(groups []string) (string, error)
 	SelectServer(servers []Serverer) (Serverer, error)
 	RetryServer(max int) bool
+	Sniff(wd string)
 }
 
 type Segment struct {
@@ -228,4 +232,28 @@ func (s *Segment) RetryServer(max int) bool {
 	}
 	s.retries++
 	return true
+}
+
+// TODO(negz): Consider a more elegant API. This implementation feels hacky.
+func (s *Segment) Sniff(wd string) {
+	if s.State() != Done {
+		return
+	}
+	if s.Number() != 1 {
+		return
+	}
+
+	sf, err := os.Open(filepath.Join(wd, s.WorkingFilename()))
+	if err != nil {
+		return
+	}
+	defer sf.Close()
+
+	b := make([]byte, 5)
+	sb, err := sf.Read(b)
+	if err != nil {
+		return
+	}
+
+	s.f.SetFileType(magic.GetHeaderType(b[:sb]))
 }

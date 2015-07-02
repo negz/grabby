@@ -6,11 +6,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/negz/grabby/magic"
 	"github.com/negz/grabby/nzb"
 	"github.com/negz/grabby/util"
 )
-
-var par2RE *regexp.Regexp = regexp.MustCompile(`(?i).+\.par2.*`)
 
 type ByNumber []Segmenter
 
@@ -27,10 +26,12 @@ type Filer interface {
 	Groups() []string
 	Segments() []Segmenter
 	SortSegments()
+	Filename() string
 	IsRequired() bool
 	IsPar2() bool
 	IsFiltered() bool
 	SegmentDone()
+	SetFileType(t magic.FileType)
 }
 
 type File struct {
@@ -44,8 +45,9 @@ type File struct {
 	err        error
 	done       int
 	doneMx     sync.Locker
+	filename   string
+	filetype   magic.FileType
 	required   bool
-	par2       bool // TODO(negz): May need to store the number of blocks.
 	filtered   bool
 }
 
@@ -59,6 +61,8 @@ func NewFile(nf *nzb.File, g Grabberer, filter ...*regexp.Regexp) Filer {
 		writeState: mx,
 		readState:  mx.RLocker(),
 		doneMx:     new(sync.Mutex),
+		filename:   magic.GetSubjectFilename(nf.Subject),
+		filetype:   magic.GetSubjectType(nf.Subject),
 		required:   true,
 	}
 
@@ -66,8 +70,7 @@ func NewFile(nf *nzb.File, g Grabberer, filter ...*regexp.Regexp) Filer {
 		f.segments = append(f.segments, NewSegment(ns, f))
 	}
 
-	if par2RE.MatchString(nf.Subject) {
-		f.par2 = true
+	if f.filetype == magic.Par2 {
 		f.required = false
 		f.Pause()
 	}
@@ -207,12 +210,16 @@ func (f *File) SortSegments() {
 	sort.Sort(ByNumber(f.segments))
 }
 
+func (f *File) Filename() string {
+	return f.filename
+}
+
 func (f *File) IsRequired() bool {
 	return f.required
 }
 
 func (f *File) IsPar2() bool {
-	return f.par2
+	return f.filetype == magic.Par2
 }
 
 func (f *File) IsFiltered() bool {
@@ -228,6 +235,10 @@ func (f *File) SegmentDone() {
 	if f.done >= len(f.segments) {
 		f.Done(nil)
 	}
+}
+
+func (f *File) SetFileType(t magic.FileType) {
+	f.filetype = t
 }
 
 func smallestFile(s, c Filer) Filer {
