@@ -43,9 +43,9 @@ var subjectTests = []struct {
 		filename: "Here is ubuntu-14.04.2-desktop-amd64.r003",
 	},
 	{
-		subject:  "Here is ubuntu-14.04.2-desktop-amd64.ra01",
+		subject:  "Here is ubuntu-14.04.2-desktop-amd64.z01",
 		filetype: Unknown,
-		filename: "Here is ubuntu-14.04.2-desktop-amd64.ra01",
+		filename: "Here is ubuntu-14.04.2-desktop-amd64.z01",
 	},
 }
 

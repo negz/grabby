@@ -31,6 +31,9 @@ var subjectTable = []*subjectDef{
 
 	&subjectDef{re: regexp.MustCompile(`(?i).*(?:"|&quot;|&#34;)(.+\.sfv)(?:"|&quot;|&#34;) yEnc`), filetype: Sfv},
 	&subjectDef{re: regexp.MustCompile(`(?i)(.+\.sfv)`), filetype: Sfv},
+
+	&subjectDef{re: regexp.MustCompile(`(?i).*(?:"|&quot;|&#34;)(.+\.[a-z\d]{2,3})(?:"|&quot;|&#34;) yEnc`), filetype: Unknown},
+	&subjectDef{re: regexp.MustCompile(`(?i)(.+\.[a-z\d]{2,3}\w)`), filetype: Unknown},
 }
 
 func GetSubjectType(s string) FileType {
