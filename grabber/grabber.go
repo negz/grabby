@@ -186,9 +186,6 @@ func (g *Grabber) Working() error {
 	return nil
 }
 
-func (g *Grabber) pauseFiles() {
-}
-
 func (g *Grabber) Pause() error {
 	g.readState.Lock()
 	switch g.state {
