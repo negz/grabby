@@ -88,7 +88,6 @@ func FromNZB(n *nzb.NZB, filter ...*regexp.Regexp) GrabberOption {
 
 		var sp2 Filer
 		g.files = make([]Filer, len(n.Files))
-		g.knownFile = make(map[Filer]bool)
 		for i, nf := range n.Files {
 			f := NewFile(nf, g, filter...)
 			g.files[i] = f
@@ -142,6 +141,7 @@ func New(wd string, ss Strategizer, gro ...GrabberOption) (*Grabber, error) {
 	mx := new(sync.RWMutex)
 	g := &Grabber{
 		wd:          wd,
+		knownFile:   make(map[Filer]bool),
 		s:           ss,
 		writeState:  mx,
 		readState:   mx.RLocker(),
