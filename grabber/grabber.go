@@ -87,14 +87,14 @@ func FromNZB(n *nzb.NZB, filter ...*regexp.Regexp) GrabberOption {
 		}
 
 		var sp2 Filer
-		// TODO(negz): Merge files and knownFile? We don't *really* care about
-		// the order of files.
-		g.files = make([]Filer, 0, len(n.Files))
+		g.files = make([]Filer, len(n.Files))
 		g.knownFile = make(map[Filer]bool)
-		for _, nf := range n.Files {
+		for i, nf := range n.Files {
 			f := NewFile(nf, g, filter...)
-			g.files = append(g.files, f)
+			g.files[i] = f
 			g.knownFile[f] = true
+			// TODO(negz): Implement BySegments sort.Interface, create and sort
+			// slice of known par2 files.
 			if f.IsPar2() {
 				sp2 = smallestFile(sp2, f)
 			}

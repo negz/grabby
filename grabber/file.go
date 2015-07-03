@@ -57,7 +57,7 @@ func NewFile(nf *nzb.File, g Grabberer, filter ...*regexp.Regexp) Filer {
 		nf:         nf,
 		g:          g,
 		hash:       util.HashString(nf.Subject),
-		segments:   make([]Segmenter, 0, len(nf.Segments)),
+		segments:   make([]Segmenter, len(nf.Segments)),
 		writeState: mx,
 		readState:  mx.RLocker(),
 		doneMx:     new(sync.Mutex),
@@ -66,8 +66,8 @@ func NewFile(nf *nzb.File, g Grabberer, filter ...*regexp.Regexp) Filer {
 		required:   true,
 	}
 
-	for _, ns := range nf.Segments {
-		f.segments = append(f.segments, NewSegment(ns, f))
+	for i, ns := range nf.Segments {
+		f.segments[i] = NewSegment(ns, f)
 	}
 
 	if f.filetype == magic.Par2 {
