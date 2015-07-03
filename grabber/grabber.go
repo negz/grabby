@@ -48,12 +48,13 @@ type Grabberer interface {
 	Files() []Filer
 	Par2Files() []Filer
 	MarkFilePar2(f Filer) error
-	FileDone()
+	FileDone(f Filer)
 	FileRequired()
 	PostProcessable() <-chan bool
 	HandleGrabs()
 	GrabAll() error
 	GrabFile(f Filer) error
+	GrabbedFiles() []Filer
 	Shutdown(error) error
 }
 
@@ -64,7 +65,9 @@ type Grabber struct {
 	meta        []Metadataer
 	files       []Filer
 	par2Files   []Filer
+	doneFiles   []Filer
 	knownFile   map[Filer]bool
+	doneMx      sync.Locker
 	s           Strategizer
 	state       State
 	writeState  sync.Locker
@@ -73,8 +76,6 @@ type Grabber struct {
 	qOut        chan Segmenter
 	err         error
 	required    int
-	done        int
-	doneMx      sync.Locker
 	pp          chan bool
 	maxRetry    int
 	decoder     func(io.Writer) io.Writer
@@ -150,6 +151,7 @@ func New(wd string, ss Strategizer, gro ...GrabberOption) (*Grabber, error) {
 	g := &Grabber{
 		wd:          wd,
 		par2Files:   make([]Filer, 0),
+		doneFiles:   make([]Filer, 0),
 		knownFile:   make(map[Filer]bool),
 		s:           ss,
 		writeState:  mx,
@@ -290,11 +292,20 @@ func (g *Grabber) Files() []Filer {
 }
 
 func (g *Grabber) isPostProcessable() bool {
-	return g.done >= g.required
+	return len(g.doneFiles) >= g.required
 }
 
 func (g *Grabber) signalPostProcessable() {
 	g.pp <- true
+}
+
+func (g *Grabber) resetGrabbedFiles() {
+	g.doneFiles = make([]Filer, 0)
+	g.required = 0
+}
+
+func (g *Grabber) GrabbedFiles() []Filer {
+	return g.doneFiles
 }
 
 func (g *Grabber) Par2Files() []Filer {
@@ -310,11 +321,11 @@ func (g *Grabber) MarkFilePar2(f Filer) error {
 	return nil
 }
 
-func (g *Grabber) FileDone() {
+func (g *Grabber) FileDone(f Filer) {
 	g.doneMx.Lock()
 	defer g.doneMx.Unlock()
 
-	g.done++
+	g.doneFiles = append(g.doneFiles, f)
 
 	if g.isPostProcessable() {
 		g.signalPostProcessable()
@@ -477,6 +488,12 @@ func (g *Grabber) HandleGrabs() {
 func (g *Grabber) GrabFile(f Filer) error {
 	if !g.knownFile[f] {
 		return UnknownFileError
+	}
+
+	// If this is the first file requested since we last became postprocessable
+	// we reset the counter of done files.
+	if g.isPostProcessable() {
+		g.resetGrabbedFiles()
 	}
 
 	switch f.State() {

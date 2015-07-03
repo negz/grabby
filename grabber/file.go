@@ -159,7 +159,7 @@ func (f *File) Done(err error) error {
 	f.state = Done
 	f.err = err
 	f.writeState.Unlock()
-	f.g.FileDone()
+	f.g.FileDone(f)
 	return err
 }
 

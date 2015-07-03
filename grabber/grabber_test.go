@@ -194,6 +194,10 @@ func TestGrabber(t *testing.T) {
 			continue
 		}
 
+		if len(g.GrabbedFiles()) != (len(g.Files()) - pausedFiles) {
+			t.Errorf("%v len(g.GrabbedFiles()) == %v, want %v", g.Name(), len(g.GrabbedFiles()), len(g.Files())-pausedFiles)
+		}
+
 		for _, f := range g.Files() {
 			if f.IsPar2() {
 				if err := g.GrabFile(f); err != nil {
@@ -204,6 +208,10 @@ func TestGrabber(t *testing.T) {
 
 		if !GrabberDone(g) {
 			t.Errorf("%v timed out waiting to become postprocessable after requesting additional par2 files", g.Name())
+		}
+
+		if len(g.GrabbedFiles()) != par2Files-1 {
+			t.Errorf("%v len(g.GrabbedFiles()) == %v, want %v", g.Name(), len(g.GrabbedFiles()), par2Files-1)
 		}
 
 		g.Shutdown(nil)
