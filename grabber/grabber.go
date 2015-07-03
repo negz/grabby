@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,12 @@ var (
 	UnknownFileError    = errors.New("asked to grab an unknown file")
 )
 
+type BySegments []Filer
+
+func (b BySegments) Len() int           { return len(b) }
+func (b BySegments) Swap(i, j int)      { b[i], b[j] = b[j], b[i] }
+func (b BySegments) Less(i, j int) bool { return len(b[i].Segments()) < len(b[j].Segments()) }
+
 type SegFileCreator func(g Grabberer, s Segmenter) (io.WriteCloser, error)
 
 func createSegmentFile(g Grabberer, s Segmenter) (io.WriteCloser, error) {
@@ -39,6 +46,8 @@ type Grabberer interface {
 	Strategy() Strategizer
 	Metadata() []Metadataer
 	Files() []Filer
+	Par2Files() []Filer
+	MarkFilePar2(f Filer) error
 	FileDone()
 	FileRequired()
 	PostProcessable() <-chan bool
@@ -54,6 +63,7 @@ type Grabber struct {
 	wd          string
 	meta        []Metadataer
 	files       []Filer
+	par2Files   []Filer
 	knownFile   map[Filer]bool
 	s           Strategizer
 	state       State
@@ -86,20 +96,18 @@ func FromNZB(n *nzb.NZB, filter ...*regexp.Regexp) GrabberOption {
 			g.meta = append(g.meta, NewMetadata(m, g))
 		}
 
-		var sp2 Filer
 		g.files = make([]Filer, len(n.Files))
 		for i, nf := range n.Files {
 			f := NewFile(nf, g, filter...)
 			g.files[i] = f
 			g.knownFile[f] = true
-			// TODO(negz): Implement BySegments sort.Interface, create and sort
-			// slice of known par2 files.
 			if f.IsPar2() {
-				sp2 = smallestFile(sp2, f)
+				g.par2Files = append(g.par2Files, f)
 			}
 		}
-		if sp2 != nil {
-			sp2.Resume()
+		sort.Sort(BySegments(g.par2Files))
+		if len(g.par2Files) > 0 {
+			g.par2Files[0].Resume()
 		}
 
 		return nil
@@ -141,6 +149,7 @@ func New(wd string, ss Strategizer, gro ...GrabberOption) (*Grabber, error) {
 	mx := new(sync.RWMutex)
 	g := &Grabber{
 		wd:          wd,
+		par2Files:   make([]Filer, 0),
 		knownFile:   make(map[Filer]bool),
 		s:           ss,
 		writeState:  mx,
@@ -286,6 +295,19 @@ func (g *Grabber) isPostProcessable() bool {
 
 func (g *Grabber) signalPostProcessable() {
 	g.pp <- true
+}
+
+func (g *Grabber) Par2Files() []Filer {
+	return g.par2Files
+}
+
+func (g *Grabber) MarkFilePar2(f Filer) error {
+	if !g.knownFile[f] {
+		return UnknownFileError
+	}
+	g.par2Files = append(g.par2Files, f)
+	sort.Sort(BySegments(g.par2Files))
+	return nil
 }
 
 func (g *Grabber) FileDone() {

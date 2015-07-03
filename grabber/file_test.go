@@ -1,11 +1,9 @@
 package grabber
 
 import (
-	"testing"
 	"time"
 
 	"github.com/negz/grabby/magic"
-	"github.com/negz/grabby/nzb"
 )
 
 type fakeFile struct {
@@ -66,27 +64,4 @@ func (ff *fakeFile) SegmentDone() {
 
 func (ff *fakeFile) SetFileType(t magic.FileType) {
 	ff.t = t
-}
-
-func TestSmallestFile(t *testing.T) {
-	t.Parallel()
-
-	f1, f2 := &fakeFile{}, &fakeFile{}
-
-	f1s1 := NewSegment(&nzb.Segment{Number: 1, ArticleID: "dick@butts$"}, f1)
-	f1.s = append(f1.s, f1s1)
-
-	f2s1 := NewSegment(&nzb.Segment{Number: 1, ArticleID: "dick@butts$"}, f2)
-	f2s2 := NewSegment(&nzb.Segment{Number: 2, ArticleID: "dick@butts$"}, f2)
-	f2.s = append(f2.s, f2s1, f2s2)
-
-	if smallestFile(nil, f1) != f1 {
-		t.Errorf("smallestFile(%v, %v) == %v, want %v", nil, f1, smallestFile(nil, f1), f1)
-	}
-	if smallestFile(f2, f1) != f1 {
-		t.Errorf("smallestFile(%v, %v) == %v, want %v", f2, f1, smallestFile(f2, f1), f2)
-	}
-	if smallestFile(f1, f2) != f1 {
-		t.Errorf("smallestFile(%v, %v) == %v, want %v", f1, f2, smallestFile(f1, f2), f1)
-	}
 }

@@ -239,11 +239,8 @@ func (f *File) SegmentDone() {
 
 func (f *File) SetFileType(t magic.FileType) {
 	f.filetype = t
-}
 
-func smallestFile(s, c Filer) Filer {
-	if (s == nil) || (len(s.Segments()) > len(c.Segments())) {
-		return c
+	if f.IsPar2() {
+		f.g.MarkFilePar2(f)
 	}
-	return s
 }
