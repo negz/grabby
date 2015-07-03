@@ -30,6 +30,7 @@ func New(workdir string) PostProcessorer {
 }
 
 func assembleTo(wd string, f grabber.Filer) (io.WriteCloser, error) {
+	// TODO(negz): Default to Filename(), fall back to Hash()
 	if f.IsPar2() {
 		return os.Create(filepath.Join(wd, fmt.Sprintf("%v.par2", f.Hash())))
 	}
@@ -51,9 +52,6 @@ func appendSegment(wd string, s grabber.Segmenter, af io.Writer) error {
 func (pp *PostProcessor) Assemble(files []grabber.Filer) error {
 	for _, f := range files {
 		if pp.assembled[f] {
-			continue
-		}
-		if f.State() != grabber.Done {
 			continue
 		}
 

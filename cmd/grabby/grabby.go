@@ -90,7 +90,7 @@ func main() {
 	watchGrabber(g)
 
 	pp := postprocess.New(g.WorkDir())
-	if err := pp.Assemble(g.Files()); err != nil {
+	if err := pp.Assemble(g.GrabbedFiles()); err != nil {
 		log.Println(err)
 	}
 
