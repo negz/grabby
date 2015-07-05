@@ -15,6 +15,7 @@ import (
 
 	"github.com/negz/grabby/decode"
 	"github.com/negz/grabby/decode/yenc"
+	"github.com/negz/grabby/magic"
 	"github.com/negz/grabby/nntp"
 	"github.com/negz/grabby/nzb"
 	"github.com/negz/grabby/util"
@@ -66,7 +67,6 @@ type Grabber struct {
 	files       []Filer
 	par2Files   []Filer
 	doneFiles   []Filer
-	knownFile   map[Filer]bool
 	doneMx      sync.Locker
 	s           Strategizer
 	state       State
@@ -79,6 +79,7 @@ type Grabber struct {
 	pp          chan bool
 	maxRetry    int
 	decoder     func(io.Writer) io.Writer
+	sniffer     func(io.Writer, magic.FileTyper) io.Writer
 	fileCreator SegFileCreator
 	grabT       *tomb.Tomb
 	enqueueT    *tomb.Tomb
@@ -101,7 +102,6 @@ func FromNZB(n *nzb.NZB, filter ...*regexp.Regexp) GrabberOption {
 		for i, nf := range n.Files {
 			f := NewFile(nf, g, filter...)
 			g.files[i] = f
-			g.knownFile[f] = true
 			if f.IsPar2() {
 				g.par2Files = append(g.par2Files, f)
 			}
@@ -129,6 +129,13 @@ func Decoder(d func(io.Writer) io.Writer) GrabberOption {
 	}
 }
 
+func Sniffer(s func(io.Writer, magic.FileTyper) io.Writer) GrabberOption {
+	return func(g *Grabber) error {
+		g.sniffer = s
+		return nil
+	}
+}
+
 func RetryOnError(r int) GrabberOption {
 	return func(g *Grabber) error {
 		g.maxRetry = r
@@ -152,7 +159,6 @@ func New(wd string, ss Strategizer, gro ...GrabberOption) (*Grabber, error) {
 		wd:          wd,
 		par2Files:   make([]Filer, 0),
 		doneFiles:   make([]Filer, 0),
-		knownFile:   make(map[Filer]bool),
 		s:           ss,
 		writeState:  mx,
 		readState:   mx.RLocker(),
@@ -162,6 +168,7 @@ func New(wd string, ss Strategizer, gro ...GrabberOption) (*Grabber, error) {
 		doneMx:      new(sync.Mutex),
 		pp:          make(chan bool),
 		decoder:     yenc.NewDecoder, // TODO(negz): Detect encoding.
+		sniffer:     magic.NewSniffer,
 		fileCreator: createSegmentFile,
 		grabT:       new(tomb.Tomb),
 		enqueueT:    new(tomb.Tomb),
@@ -313,7 +320,7 @@ func (g *Grabber) Par2Files() []Filer {
 }
 
 func (g *Grabber) MarkFilePar2(f Filer) error {
-	if !g.knownFile[f] {
+	if f.Grabber() != g {
 		return UnknownFileError
 	}
 	g.par2Files = append(g.par2Files, f)
@@ -378,7 +385,6 @@ func (g *Grabber) handleResponses() {
 					continue
 				}
 				s.Done(nil)
-				s.Sniff(g.wd)
 			}
 		}
 	})
@@ -391,13 +397,13 @@ func (g *Grabber) dispatch(s Segmenter) {
 	}
 
 	// Create or truncate the decoded output.
-	w, err := g.fileCreator(g, s)
+	f, err := g.fileCreator(g, s)
 	if err != nil {
 		// TODO(negz): Pause grabber instead of failing segment?
 		s.Done(err)
 		return
 	}
-	s.WriteTo(w)
+	s.WriteTo(f)
 
 	// Select the first untried server.
 	srv, err := s.SelectServer(g.s.Servers())
@@ -415,7 +421,7 @@ func (g *Grabber) dispatch(s Segmenter) {
 	}
 
 	if srv.Retention() > 0 {
-		if time.Since(s.Posted()) > srv.Retention() {
+		if time.Since(s.File().Posted()) > srv.Retention() {
 			// Download is out of this server's retention.
 			s.FailServer(srv)
 			g.dispatch(s)
@@ -425,7 +431,7 @@ func (g *Grabber) dispatch(s Segmenter) {
 
 	group := ""
 	if srv.MustBeInGroup() {
-		group, err = s.SelectGroup(s.Groups())
+		group, err = s.SelectGroup(s.File().Groups())
 		if err != nil {
 			s.FailServer(srv)
 			g.dispatch(s)
@@ -434,7 +440,13 @@ func (g *Grabber) dispatch(s Segmenter) {
 	}
 
 	// Request the article ID from the first non-failed group.
-	srv.Grab(&nntp.GrabRequest{group, s.ID(), g.decoder(s.WritingTo())})
+	switch s.Number() {
+	case 1:
+		// The first segment may provide a hint for the file's type.
+		srv.Grab(&nntp.GrabRequest{group, s.ID(), g.decoder(g.sniffer(s.WritingTo(), s.File()))})
+	default:
+		srv.Grab(&nntp.GrabRequest{group, s.ID(), g.decoder(s.WritingTo())})
+	}
 }
 
 func (g *Grabber) handleEnqueues() {
@@ -486,7 +498,7 @@ func (g *Grabber) HandleGrabs() {
 }
 
 func (g *Grabber) GrabFile(f Filer) error {
-	if !g.knownFile[f] {
+	if f.Grabber() != g {
 		return UnknownFileError
 	}
 

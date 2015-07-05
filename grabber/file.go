@@ -19,6 +19,7 @@ func (b ByNumber) Less(i, j int) bool { return b[i].Number() < b[j].Number() }
 
 type Filer interface {
 	FSM
+	Grabber() Grabberer
 	Subject() string
 	Hash() string
 	Poster() string
@@ -26,11 +27,12 @@ type Filer interface {
 	Groups() []string
 	Segments() []Segmenter
 	SortSegments()
-	Filename() string
 	IsRequired() bool
 	IsPar2() bool
 	IsFiltered() bool
 	SegmentDone()
+	Filename() string
+	FileType() magic.FileType
 	SetFileType(t magic.FileType)
 }
 
@@ -177,6 +179,10 @@ func (f *File) State() State {
 	return f.state
 }
 
+func (f *File) Grabber() Grabberer {
+	return f.g
+}
+
 func (f *File) Subject() string {
 	return f.nf.Subject
 }
@@ -210,10 +216,6 @@ func (f *File) SortSegments() {
 	sort.Sort(ByNumber(f.segments))
 }
 
-func (f *File) Filename() string {
-	return f.filename
-}
-
 func (f *File) IsRequired() bool {
 	return f.required
 }
@@ -237,7 +239,18 @@ func (f *File) SegmentDone() {
 	}
 }
 
+func (f *File) Filename() string {
+	return f.filename
+}
+
+func (f *File) FileType() magic.FileType {
+	return f.filetype
+}
+
 func (f *File) SetFileType(t magic.FileType) {
+	if f.filetype == t {
+		return
+	}
 	f.filetype = t
 
 	if f.IsPar2() {

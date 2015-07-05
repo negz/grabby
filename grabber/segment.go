@@ -3,12 +3,8 @@ package grabber
 import (
 	"errors"
 	"io"
-	"os"
-	"path/filepath"
 	"sync"
-	"time"
 
-	"github.com/negz/grabby/magic"
 	"github.com/negz/grabby/nzb"
 	"github.com/negz/grabby/util"
 )
@@ -20,12 +16,11 @@ var (
 
 type Segmenter interface {
 	FSM
+	File() Filer
 	ID() string
 	Number() int
 	Hash() string
 	WorkingFilename() string
-	Posted() time.Time
-	Groups() []string
 	WriteTo(w io.WriteCloser)
 	WritingTo() io.WriteCloser
 	FailGroup(g string)
@@ -33,7 +28,6 @@ type Segmenter interface {
 	SelectGroup(groups []string) (string, error)
 	SelectServer(servers []Serverer) (Serverer, error)
 	RetryServer(max int) bool
-	Sniff(wd string)
 }
 
 type Segment struct {
@@ -164,6 +158,10 @@ func (s *Segment) State() State {
 	return s.state
 }
 
+func (s *Segment) File() Filer {
+	return s.f
+}
+
 func (s *Segment) ID() string {
 	return s.ns.ArticleID
 }
@@ -178,14 +176,6 @@ func (s *Segment) Hash() string {
 
 func (s *Segment) WorkingFilename() string {
 	return s.Hash()
-}
-
-func (s *Segment) Posted() time.Time {
-	return s.f.Posted()
-}
-
-func (s *Segment) Groups() []string {
-	return s.f.Groups()
 }
 
 func (s *Segment) WriteTo(w io.WriteCloser) {
@@ -232,28 +222,4 @@ func (s *Segment) RetryServer(max int) bool {
 	}
 	s.retries++
 	return true
-}
-
-// TODO(negz): Consider a more elegant API. This implementation feels hacky.
-func (s *Segment) Sniff(wd string) {
-	if s.State() != Done {
-		return
-	}
-	if s.Number() != 1 {
-		return
-	}
-
-	sf, err := os.Open(filepath.Join(wd, s.WorkingFilename()))
-	if err != nil {
-		return
-	}
-	defer sf.Close()
-
-	b := make([]byte, 5)
-	sb, err := sf.Read(b)
-	if err != nil {
-		return
-	}
-
-	s.f.SetFileType(magic.GetHeaderType(b[:sb]))
 }

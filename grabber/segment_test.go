@@ -36,8 +36,8 @@ func TestSegment(t *testing.T) {
 		if s.Number() != tt.num {
 			t.Errorf("s.Number() == %v, want %v", s.Number(), tt.num)
 		}
-		if s.Posted() != postDate {
-			t.Errorf("s.Posted() == %v, want %v", s.Posted(), postDate)
+		if s.File().Posted() != postDate {
+			t.Errorf("s.Posted() == %v, want %v", s.File().Posted(), postDate)
 		}
 
 		if err := s.Pause(); err != nil {

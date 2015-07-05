@@ -14,6 +14,10 @@ type fakeFile struct {
 	s []Segmenter
 }
 
+func (ff *fakeFile) Grabber() Grabberer {
+	return nil
+}
+
 func (ff *fakeFile) Subject() string {
 	return "yEnc: Here guys I yEncoded some dickbutts for you [1/1]"
 }
@@ -60,6 +64,10 @@ func (ff *fakeFile) IsRequired() bool {
 
 func (ff *fakeFile) SegmentDone() {
 	ff.d++
+}
+
+func (ff *fakeFile) FileType() magic.FileType {
+	return ff.t
 }
 
 func (ff *fakeFile) SetFileType(t magic.FileType) {
