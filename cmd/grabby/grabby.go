@@ -91,7 +91,13 @@ func main() {
 
 	pp := postprocess.New(g.WorkDir())
 	if err := pp.Assemble(g.GrabbedFiles()); err != nil {
-		log.Println(err)
+		log.Fatalf("Unable to assemble files: %v", err)
+	}
+	if err := pp.Repair(); err != nil {
+		log.Fatalf("Unable to repair files: %v", err)
+	}
+	if err := pp.Extract(); err != nil {
+		log.Fatalf("Unable to extract files: %v", err)
 	}
 
 	if err := g.Shutdown(nil); err != nil {
