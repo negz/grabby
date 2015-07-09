@@ -254,6 +254,6 @@ func (f *File) SetFileType(t magic.FileType) {
 	f.filetype = t
 
 	if f.IsPar2() {
-		f.g.MarkFilePar2(f)
+		f.g.FileIsPar2(f)
 	}
 }

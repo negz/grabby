@@ -48,8 +48,8 @@ type Grabberer interface {
 	Metadata() []Metadataer
 	Files() []Filer
 	Par2Files() []Filer
-	MarkFilePar2(f Filer) error
-	FileDone(f Filer)
+	FileIsPar2(f Filer) error
+	FileDone(f Filer) error
 	FileRequired()
 	PostProcessable() <-chan bool
 	HandleGrabs()
@@ -319,7 +319,7 @@ func (g *Grabber) Par2Files() []Filer {
 	return g.par2Files
 }
 
-func (g *Grabber) MarkFilePar2(f Filer) error {
+func (g *Grabber) FileIsPar2(f Filer) error {
 	if f.Grabber() != g {
 		return UnknownFileError
 	}
@@ -328,7 +328,11 @@ func (g *Grabber) MarkFilePar2(f Filer) error {
 	return nil
 }
 
-func (g *Grabber) FileDone(f Filer) {
+func (g *Grabber) FileDone(f Filer) error {
+	if f.Grabber() != g {
+		return UnknownFileError
+	}
+
 	g.doneMx.Lock()
 	defer g.doneMx.Unlock()
 
@@ -337,6 +341,7 @@ func (g *Grabber) FileDone(f Filer) {
 	if g.isPostProcessable() {
 		g.signalPostProcessable()
 	}
+	return nil
 }
 
 func (g *Grabber) FileRequired() {
