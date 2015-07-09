@@ -3,7 +3,9 @@ package yenc
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"io/ioutil"
+	"os"
 	"testing"
 )
 
@@ -68,7 +70,7 @@ var decodeTests = []struct {
 
 func TestDecode(t *testing.T) {
 	for _, tt := range decodeTests {
-		y, err := ioutil.ReadFile(tt.yenc)
+		y, err := os.Open(tt.yenc)
 		if err != nil {
 			t.Errorf("error opening test data %v: %v", tt.yenc, err)
 			continue
@@ -81,7 +83,7 @@ func TestDecode(t *testing.T) {
 
 		b := new(bytes.Buffer)
 		d := NewDecoder(b)
-		_, err = d.Write(y)
+		_, err = io.Copy(d, y)
 
 		if tt.err != "" {
 			_, ok := err.(DecodeError)

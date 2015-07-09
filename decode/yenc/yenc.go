@@ -64,6 +64,8 @@ type Decoder struct {
 	bytesBeforeheader  int
 	decodeMap          [256]byte
 	criticalDecodeMap  [256]byte
+	scanErr            error
+	scanLine           []byte
 }
 
 // NewDecoder returns an io.Writer that decodes the supplied io.Writer.
@@ -208,68 +210,55 @@ func (d *Decoder) decodeline(line []byte) error {
 	return nil
 }
 
+func (d *Decoder) scan() bool {
+	if bytes.IndexByte(d.b.Bytes(), '\n') == -1 {
+		return false
+	}
+	if d.scanLine, d.scanErr = d.b.ReadBytes('\n'); d.scanErr != nil {
+		return false
+	}
+	return true
+}
+
 // Decode decodes yEnc data as it is written to the Decoder's buffer.
 func (d *Decoder) yDecode() error {
-	for d.header == nil {
-		if d.bytesBeforeheader >= maxheaderBuffer {
-			return DecodeError(fmt.Sprintf("no yEnc header found in first %v bytes", maxheaderBuffer))
-		}
-		if bytes.IndexByte(d.b.Bytes(), '\n') == -1 {
-			return nil
-		}
-		line, err := d.b.ReadBytes('\n')
-		if err != nil {
-			return err
-		}
-		d.bytesBeforeheader += len(line)
-		if string(line[:8]) != "=ybegin " {
-			continue
-		}
-		line = bytes.TrimRight(line, "\r\n")
-		if d.header, err = parseheader(line); err != nil {
-			return err
-		}
-	}
-
-	if d.header.multipart && (d.partHeader == nil) {
-		if bytes.IndexByte(d.b.Bytes(), '\n') == -1 {
-			return nil
-		}
-		line, err := d.b.ReadBytes('\n')
-		if err != nil {
-			return err
-		}
-		if string(line[:7]) != "=ypart " {
-			return DecodeError("no yEnc part header immediately followed multipart header")
-		}
-		line = bytes.TrimRight(line, "\r\n")
-		if d.partHeader, err = parsepartHeader(line); err != nil {
-			return err
-		}
-	}
-
-	for bytes.IndexByte(d.b.Bytes(), '\n') != -1 {
-		line, err := d.b.ReadBytes('\n')
-		if err != nil {
-			return err
-		}
-		line = bytes.TrimRight(line, "\r\n")
-
-		if string(line[:6]) == "=yend " {
-			if d.trailer, err = parsetrailer(line); err != nil {
+	var err error
+	for d.scan() {
+		switch {
+		case d.header == nil:
+			if d.bytesBeforeheader >= maxheaderBuffer {
+				return DecodeError(fmt.Sprintf("no yEnc header found in first %v bytes", maxheaderBuffer))
+			}
+			if string(d.scanLine[:8]) != "=ybegin " {
+				d.bytesBeforeheader += len(d.scanLine)
+				continue
+			}
+			d.scanLine = bytes.TrimRight(d.scanLine, "\r\n")
+			if d.header, err = parseheader(d.scanLine); err != nil {
 				return err
 			}
-			if err := d.verifycrc32s(); err != nil {
+		case d.header.multipart && (d.partHeader == nil):
+			if string(d.scanLine[:7]) != "=ypart " {
+				return DecodeError("no yEnc part header immediately followed multipart header")
+			}
+			d.scanLine = bytes.TrimRight(d.scanLine, "\r\n")
+			if d.partHeader, err = parsepartHeader(d.scanLine); err != nil {
 				return err
 			}
-			return nil
-		}
-
-		if err := d.decodeline(line); err != nil {
-			return err
+		default:
+			d.scanLine = bytes.TrimRight(d.scanLine, "\r\n")
+			if string(d.scanLine[:6]) == "=yend " {
+				if d.trailer, err = parsetrailer(d.scanLine); err != nil {
+					return err
+				}
+				return d.verifycrc32s()
+			}
+			if err = d.decodeline(d.scanLine); err != nil {
+				return err
+			}
 		}
 	}
-	return nil
+	return d.scanErr
 }
 
 // Write wraps the Write() of the embedded io.Writer, decoding along the way.
