@@ -70,7 +70,8 @@ type Decoder struct {
 
 // NewDecoder returns an io.Writer that decodes the supplied io.Writer.
 func NewDecoder(w io.Writer) io.Writer {
-	d := &Decoder{w: w, b: new(bytes.Buffer), crc: crc32.NewIEEE()}
+	c := crc32.NewIEEE()
+	d := &Decoder{w: io.MultiWriter(w, c), b: new(bytes.Buffer), crc: c}
 	for i := 0; i < len(d.decodeMap); i++ {
 		d.decodeMap[i] = byte((i - 42) & 255)
 	}
@@ -202,9 +203,6 @@ func (d *Decoder) decodeline(line []byte) error {
 		}
 	}
 	if _, err := d.w.Write(line[:p]); err != nil {
-		return err
-	}
-	if _, err := d.crc.Write(line[:p]); err != nil {
 		return err
 	}
 	return nil
