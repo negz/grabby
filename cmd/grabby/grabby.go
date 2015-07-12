@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"time"
 
@@ -83,25 +84,59 @@ func main() {
 
 	g.HandleGrabs()
 
+	// Get the bulk of the files.
 	if err := g.GrabAll(); err != nil {
+		g.Shutdown(err)
 		log.Fatalf("Unable to grab all the things: %v", err)
 	}
-
 	watchGrabber(g)
 
+	// Start a postprocessor
 	pp := postprocess.New(g.WorkDir())
-	if err := pp.Assemble(g.GrabbedFiles()); err != nil {
-		log.Fatalf("Unable to assemble files: %v", err)
-	}
-	if err := pp.Repair(); err != nil {
-		log.Fatalf("Unable to repair files: %v", err)
-	}
-	if err := pp.Extract(); err != nil {
-		log.Fatalf("Unable to extract files: %v", err)
+	pp.AddFiles(g.GrabbedFiles())
+
+	// Start the assemble and repair cycle.
+	r := pp.Repairer()
+	for !r.Repaired() {
+		if r.BlocksNeeded() > 0 {
+			grabFiles, err := getMorePar2s(r.BlocksNeeded(), g.Par2Files())
+			if err != nil {
+				g.Shutdown(err)
+				log.Fatalf("Unable to repair files: %v", err)
+			}
+			for _, f := range grabFiles {
+				log.Printf("Grabbing extra par2 file %v", f.Filename())
+				g.GrabFile(f)
+			}
+			watchGrabber(g)
+			pp.AddFiles(g.GrabbedFiles())
+		}
+
+		log.Printf("Assembling...")
+		if err := pp.Assemble(); err != nil {
+			log.Fatalf("Unable to assemble files: %v", err)
+		}
+		log.Printf("Repairing...")
+		if err := r.Repair(); err != nil {
+			log.Fatalf("Unable to repair files: %v", err)
+		}
 	}
 
 	if err := g.Shutdown(nil); err != nil {
 		log.Fatalf("Unable to shutdown grabber: %v", err)
 	}
 
+}
+
+func getMorePar2s(blocksNeeded int, par2Files []grabber.Filer) ([]grabber.Filer, error) {
+	blocks := 0
+	needFiles := 0
+	for _, f := range par2Files {
+		blocks += postprocess.BlocksFromFilename(f.Filename())
+		needFiles++
+		if blocks >= blocksNeeded {
+			return par2Files[:needFiles], nil
+		}
+	}
+	return par2Files, fmt.Errorf("insufficient blocks to recover - %v of %v", blocks, blocksNeeded)
 }
