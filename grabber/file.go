@@ -73,6 +73,7 @@ func NewFile(nf *nzb.File, g Grabberer, filter ...*regexp.Regexp) Filer {
 	}
 
 	if f.filetype == magic.Par2 {
+		f.g.FileIsPar2(f)
 		f.required = false
 		f.Pause()
 	}
