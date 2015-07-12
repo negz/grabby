@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"io/ioutil"
+	"strconv"
 )
 
 // PasswordFromFile reads a password from a file.
@@ -51,4 +52,13 @@ func UpdateDownloadRate(decay, rate, seconds float64, bytes int64) float64 {
 		return float64(bytes) / seconds
 	}
 	return ((float64(bytes) / seconds) * decay) + (rate * (1 - decay))
+}
+
+// DefaultAtoi converts string to an integer, returning d if an error occurs.
+func DefaultAtoi(s string, d int) int {
+	i, err := strconv.Atoi(s)
+	if err != nil {
+		return d
+	}
+	return i
 }
