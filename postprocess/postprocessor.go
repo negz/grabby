@@ -6,11 +6,23 @@ import "github.com/negz/grabby/grabber"
 const par2bin string = "/usr/local/bin/par2repair"
 const unrarbin string = "/usr/local/bin/unrar"
 
+type Repairer interface {
+	Repair() error
+	Repaired() bool
+	RenamedFiles() map[string]string
+	BlocksNeeded() int
+}
+
+type Extracter interface {
+	Extract() error
+	ExtractedFiles() []string
+}
+
 type PostProcessorer interface {
 	AddFiles([]grabber.Filer)
 	Assemble() error
 	Repairer() Repairer
-	//Extract() error
+	// Extracter() Extracter
 }
 
 type PostProcessor struct {
@@ -52,5 +64,14 @@ func (pp *PostProcessor) Assemble() error {
 
 // TODO(negz): Handle stuff what isn't par2?
 func (pp *PostProcessor) Repairer() Repairer {
+	if pp.par2File == nil {
+		return &NoopRepairer{}
+	}
 	return NewPar2Cmdline(par2bin, Par2(pp.par2File), Files(pp.files))
 }
+
+/*
+func (pp *PostProcessor) Extracter() Extracter {
+	return NewUnrar(unrarbin)
+}
+*/

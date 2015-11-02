@@ -132,7 +132,7 @@ func getMorePar2s(blocksNeeded int, par2Files []grabber.Filer) ([]grabber.Filer,
 	blocks := 0
 	needFiles := 0
 	for _, f := range par2Files {
-		blocks += postprocess.BlocksFromFilename(f.Filename())
+		blocks += postprocess.Par2BlocksFromFilename(f.Filename())
 		needFiles++
 		if blocks >= blocksNeeded {
 			return par2Files[:needFiles], nil

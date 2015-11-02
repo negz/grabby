@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/negz/grabby/grabber"
+	"github.com/negz/grabby/magic"
 )
 
 type State int
@@ -21,24 +22,25 @@ const (
 type Filer interface {
 	Path() string
 	IsPar2() bool
+	FileType() magic.FileType
 	State() State
 	Assemble() error
 }
 
 type File struct {
-	segments []string
+	segPaths []string
 	filename string
 	filepath string
-	isPar2   bool
+	filetype magic.FileType
 	state    State
 }
 
 func NewFile(wd string, gf grabber.Filer) Filer {
-	f := &File{segments: make([]string, len(gf.Segments())), isPar2: gf.IsPar2()}
+	f := &File{segPaths: make([]string, len(gf.Segments())), filetype: gf.FileType()}
 
 	gf.SortSegments()
 	for i, s := range gf.Segments() {
-		f.segments[i] = filepath.Join(wd, s.WorkingFilename())
+		f.segPaths[i] = filepath.Join(wd, s.WorkingFilename())
 	}
 
 	switch {
@@ -60,7 +62,11 @@ func (f *File) Path() string {
 }
 
 func (f *File) IsPar2() bool {
-	return f.isPar2
+	return f.filetype == magic.Par2
+}
+
+func (f *File) FileType() magic.FileType {
+	return f.filetype
 }
 
 func (f *File) State() State {
@@ -91,7 +97,7 @@ func (f *File) Assemble() error {
 	}
 	defer af.Close()
 
-	for _, s := range f.segments {
+	for _, s := range f.segPaths {
 		if err := appendSegment(af, s); err != nil {
 			return err
 		}

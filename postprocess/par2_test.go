@@ -98,8 +98,8 @@ var blocksFromFilenameTests = []struct {
 func TestBlocksFromFilename(t *testing.T) {
 	t.Parallel()
 	for _, tt := range blocksFromFilenameTests {
-		if BlocksFromFilename(tt.filename) != tt.blocks {
-			t.Errorf("BlocksFromFilename(%v) == %v, want %v", tt.filename, BlocksFromFilename(tt.filename), tt.blocks)
+		if Par2BlocksFromFilename(tt.filename) != tt.blocks {
+			t.Errorf("BlocksFromFilename(%v) == %v, want %v", tt.filename, Par2BlocksFromFilename(tt.filename), tt.blocks)
 		}
 	}
 

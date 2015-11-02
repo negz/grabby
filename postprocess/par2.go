@@ -10,9 +10,13 @@ import (
 	"github.com/negz/grabby/util"
 )
 
+var (
+	ErrNoPar2File      = errors.New("no par2 file path supplied")
+	ErrNoFilesToRepair = errors.New("no file paths supplied")
+)
 var blocksRegexp *regexp.Regexp = regexp.MustCompile(`(?i)^.+\.vol\d+\+(\d+).par2$`)
 
-func BlocksFromFilename(filename string) int {
+func Par2BlocksFromFilename(filename string) int {
 	if !blocksRegexp.MatchString(filename) {
 		return 0
 	}
@@ -50,13 +54,6 @@ var lineTable = []*par2Line{
 	&par2Line{repairComplete, regexp.MustCompile(`^Repair complete.$`)},
 	&par2Line{repairNotPossible, regexp.MustCompile(`^You need (\d+) more recovery blocks to be able to repair.$`)},
 	&par2Line{fileRenamed, regexp.MustCompile(`File: "(.+)" - is a match for "(.+)".$`)},
-}
-
-type Repairer interface {
-	Repair() error
-	Repaired() bool
-	RenamedFiles() map[string]string
-	BlocksNeeded() int
 }
 
 type Par2Cmdline struct {
@@ -146,10 +143,10 @@ func (p2 *Par2Cmdline) handleStdout(b []byte) {
 
 func (p2 *Par2Cmdline) Repair() error {
 	if p2.par2FilePath == "" {
-		return errors.New("no par2 file path supplied")
+		return ErrNoPar2File
 	}
 	if len(p2.filePaths) == 0 {
-		return errors.New("no file paths supplied")
+		return ErrNoFilesToRepair
 	}
 	d := deputy.Deputy{
 		Errors:    deputy.FromStderr,
