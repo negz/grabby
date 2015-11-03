@@ -11,16 +11,18 @@ const (
 	Pending State = iota
 	Pausing
 	Paused
+	Resuming
 	Working
 	Done
 )
 
 var stateName = map[State]string{
-	Pending: "pending",
-	Pausing: "pausing",
-	Paused:  "paused",
-	Working: "working",
-	Done:    "done",
+	Pending:  "pending",
+	Pausing:  "pausing",
+	Paused:   "paused",
+	Resuming: "resuming",
+	Working:  "working",
+	Done:     "done",
 }
 
 func (s State) String() string {

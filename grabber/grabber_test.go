@@ -50,6 +50,7 @@ var grabberTests = []struct {
 	filteredFiles int
 	pausedFiles   int
 	name          string
+	resumeSleep   time.Duration
 }{
 	{
 		servers:       []nntp.Serverer{newFakeNNTPServer("nntp1.fake:119", 5)},
@@ -62,6 +63,7 @@ var grabberTests = []struct {
 		filteredFiles: 2,
 		pausedFiles:   16,
 		name:          "ubuntu-14.04.2-desktop-amd64",
+		resumeSleep:   1 * time.Second,
 	},
 	{
 		servers:     []nntp.Serverer{newFakeNNTPServer("nntp1.fake:119", 30)},
@@ -72,6 +74,7 @@ var grabberTests = []struct {
 		par2Files:   15,
 		pausedFiles: 14,
 		name:        "ubuntu-14.04.2-desktop-amd64",
+		resumeSleep: 0 * time.Second,
 	},
 	{
 		servers: []nntp.Serverer{
@@ -90,6 +93,7 @@ var grabberTests = []struct {
 		par2Files:   15,
 		pausedFiles: 14,
 		name:        "ubuntu-14.04.2-desktop-amd64",
+		resumeSleep: 0 * time.Second,
 	},
 }
 
@@ -181,6 +185,10 @@ func TestGrabber(t *testing.T) {
 			t.Errorf("%v g.Pause(): %v", g.Name(), err)
 		}
 
+		if tt.resumeSleep > 0*time.Second {
+			time.Sleep(tt.resumeSleep)
+		}
+
 		if err := g.Resume(); err != nil {
 			t.Errorf("%v g.Resume(): %v", g.Name(), err)
 		}
@@ -189,7 +197,15 @@ func TestGrabber(t *testing.T) {
 			t.Errorf("%v timed out waiting to become postprocessable", g.Name())
 			g.Shutdown(nil)
 			for _, f := range g.Files() {
-				t.Logf("File state: %v", f.State())
+				if f.State() != Working {
+					continue
+				}
+				t.Logf("File %v state: %v", f.Filename(), f.State())
+				for _, s := range f.Segments() {
+					if s.State() != Done {
+						t.Logf("Segment %v state %v: %v", s.ID(), s.State(), s.Err())
+					}
+				}
 			}
 			continue
 		}

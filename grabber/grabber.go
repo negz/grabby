@@ -215,11 +215,11 @@ func (g *Grabber) Pause() error {
 	}
 
 	g.writeState.Lock()
-	g.state = Paused
-	g.writeState.Unlock()
 	for _, f := range g.files {
 		f.Pause()
 	}
+	g.state = Paused
+	g.writeState.Unlock()
 	return nil
 
 }
@@ -235,20 +235,26 @@ func (g *Grabber) Resume() error {
 	}
 
 	g.writeState.Lock()
-	g.state = Pending
-	g.writeState.Unlock()
 	for _, f := range g.files {
 		// par2 and filtered files must be unpaused explicitly.
 		if !f.IsRequired() {
 			continue
 		}
 		f.Resume()
-	}
-	if err := g.GrabAll(); err != nil {
-		return err
-	}
-	return nil
 
+		if f.State() != Pending {
+			// We don't need to grab done or working files, and we want an
+			// explicit unpause for paused files.
+			continue
+		}
+
+		if err := g.GrabFile(f); err != nil {
+			return err
+		}
+	}
+	g.state = Pending
+	g.writeState.Unlock()
+	return nil
 }
 
 func (g *Grabber) Done(err error) error {
@@ -509,9 +515,11 @@ func (g *Grabber) GrabFile(f Filer) error {
 
 	// If this is the first file requested since we last became postprocessable
 	// we reset the counter of done files.
+	g.doneMx.Lock()
 	if g.isPostProcessable() {
 		g.resetGrabbedFiles()
 	}
+	g.doneMx.Unlock()
 
 	switch f.State() {
 	case Pending:

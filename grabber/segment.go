@@ -68,6 +68,9 @@ func (s *Segment) Working() error {
 		return StateError
 	}
 
+	if err := s.f.Working(); err != nil {
+		return err
+	}
 	s.writeState.Lock()
 	if s.state == Pausing {
 		s.state = Paused
@@ -77,9 +80,6 @@ func (s *Segment) Working() error {
 
 	s.state = Working
 	s.writeState.Unlock()
-	if err := s.f.Working(); err != nil {
-		return err
-	}
 	return nil
 }
 

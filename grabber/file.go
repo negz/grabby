@@ -126,11 +126,14 @@ func (f *File) Pause() error {
 	}
 
 	f.writeState.Lock()
-	f.state = Paused
+	f.state = Pausing
 	f.writeState.Unlock()
 	for _, s := range f.segments {
 		s.Pause()
 	}
+	f.writeState.Lock()
+	f.state = Paused
+	f.writeState.Unlock()
 	return nil
 }
 
@@ -145,15 +148,18 @@ func (f *File) Resume() error {
 	}
 
 	f.writeState.Lock()
+	f.state = Resuming
+	f.writeState.Unlock()
+	for _, s := range f.segments {
+		s.Resume()
+	}
+	f.writeState.Lock()
 	f.state = Pending
 	if !f.required {
 		f.required = true
 		f.g.FileRequired()
 	}
 	f.writeState.Unlock()
-	for _, s := range f.segments {
-		s.Resume()
-	}
 	return nil
 }
 
