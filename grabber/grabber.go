@@ -57,32 +57,36 @@ type Grabberer interface {
 	GrabFile(f Filer) error
 	GrabbedFiles() []Filer
 	Shutdown(error) error
+	Health() float64
 }
 
 type Grabber struct {
-	name        string
-	hash        string
-	wd          string
-	meta        []Metadataer
-	files       []Filer
-	par2Files   []Filer
-	doneFiles   []Filer
-	doneMx      sync.Locker
-	s           Strategizer
-	state       State
-	writeState  sync.Locker
-	readState   sync.Locker
-	qIn         chan Segmenter
-	qOut        chan Segmenter
-	err         error
-	required    int
-	pp          chan bool
-	maxRetry    int
-	decoder     func(io.Writer) io.Writer
-	sniffer     func(io.Writer, magic.FileTyper) io.Writer
-	fileCreator SegFileCreator
-	grabT       *tomb.Tomb
-	enqueueT    *tomb.Tomb
+	name             string
+	hash             string
+	wd               string
+	meta             []Metadataer
+	files            []Filer
+	par2Files        []Filer
+	doneFiles        []Filer
+	doneMx           sync.Locker
+	s                Strategizer
+	state            State
+	writeState       sync.Locker
+	readState        sync.Locker
+	qIn              chan Segmenter
+	qOut             chan Segmenter
+	err              error
+	required         int
+	pp               chan bool
+	maxRetry         int
+	decoder          func(io.Writer) io.Writer
+	sniffer          func(io.Writer, magic.FileTyper) io.Writer
+	fileCreator      SegFileCreator
+	grabT            *tomb.Tomb
+	enqueueT         *tomb.Tomb
+	segments         float64
+	failedSegments   float64
+	failedSegmentsMx sync.Locker
 }
 
 type GrabberOption func(*Grabber) error
@@ -105,6 +109,7 @@ func FromNZB(n *nzb.NZB, filter ...*regexp.Regexp) GrabberOption {
 			if f.IsPar2() {
 				g.par2Files = append(g.par2Files, f)
 			}
+			g.segments += float64(len(f.Segments()))
 		}
 		sort.Sort(BySegments(g.par2Files))
 		if len(g.par2Files) > 0 {
@@ -156,22 +161,23 @@ func New(wd string, ss Strategizer, gro ...GrabberOption) (*Grabber, error) {
 	}
 	mx := new(sync.RWMutex)
 	g := &Grabber{
-		wd:          wd,
-		par2Files:   make([]Filer, 0),
-		doneFiles:   make([]Filer, 0),
-		s:           ss,
-		writeState:  mx,
-		readState:   mx.RLocker(),
-		qIn:         make(chan Segmenter, 100), // TODO(negz): Determine best buffer len.
-		qOut:        make(chan Segmenter, 100),
-		maxRetry:    3,
-		doneMx:      new(sync.Mutex),
-		pp:          make(chan bool),
-		decoder:     yenc.NewDecoder, // TODO(negz): Detect encoding.
-		sniffer:     magic.NewSniffer,
-		fileCreator: createSegmentFile,
-		grabT:       new(tomb.Tomb),
-		enqueueT:    new(tomb.Tomb),
+		wd:               wd,
+		par2Files:        make([]Filer, 0),
+		doneFiles:        make([]Filer, 0),
+		s:                ss,
+		writeState:       mx,
+		readState:        mx.RLocker(),
+		qIn:              make(chan Segmenter, 100), // TODO(negz): Determine best buffer len.
+		qOut:             make(chan Segmenter, 100),
+		maxRetry:         3,
+		doneMx:           new(sync.Mutex),
+		pp:               make(chan bool),
+		decoder:          yenc.NewDecoder, // TODO(negz): Detect encoding.
+		sniffer:          magic.NewSniffer,
+		fileCreator:      createSegmentFile,
+		grabT:            new(tomb.Tomb),
+		enqueueT:         new(tomb.Tomb),
+		failedSegmentsMx: new(sync.Mutex),
 	}
 	for _, o := range gro {
 		if err := o(g); err != nil {
@@ -392,6 +398,7 @@ func (g *Grabber) handleResponses() {
 				s := segment[rsp.ID]
 				if rsp.Error != nil {
 					g.handleError(s, rsp)
+					s.WritingTo().Close()
 					g.enqueue(s)
 					continue
 				}
@@ -412,6 +419,7 @@ func (g *Grabber) dispatch(s Segmenter) {
 	if err != nil {
 		// TODO(negz): Pause grabber instead of failing segment?
 		s.Done(err)
+		g.segFailed()
 		return
 	}
 	s.WriteTo(f)
@@ -420,6 +428,7 @@ func (g *Grabber) dispatch(s Segmenter) {
 	srv, err := s.SelectServer(g.s.Servers())
 	if err != nil {
 		s.Done(err)
+		g.segFailed()
 		return
 	}
 
@@ -427,6 +436,7 @@ func (g *Grabber) dispatch(s Segmenter) {
 	// TODO(negz): Don't treat this temporary failure as permanent?
 	if !srv.Alive() {
 		s.FailServer(srv)
+		s.WritingTo().Close()
 		g.dispatch(s)
 		return
 	}
@@ -435,6 +445,7 @@ func (g *Grabber) dispatch(s Segmenter) {
 		if time.Since(s.File().Posted()) > srv.Retention() {
 			// Download is out of this server's retention.
 			s.FailServer(srv)
+			s.WritingTo().Close()
 			g.dispatch(s)
 			return
 		}
@@ -445,6 +456,7 @@ func (g *Grabber) dispatch(s Segmenter) {
 		group, err = s.SelectGroup(s.File().Groups())
 		if err != nil {
 			s.FailServer(srv)
+			s.WritingTo().Close()
 			g.dispatch(s)
 			return
 		}
@@ -557,4 +569,15 @@ func (g *Grabber) Shutdown(err error) error {
 	g.enqueueT.Kill(err)
 	g.grabT.Kill(g.s.Shutdown(g.enqueueT.Wait()))
 	return g.grabT.Wait()
+}
+
+func (g *Grabber) segFailed() {
+	g.failedSegmentsMx.Lock()
+	g.failedSegments++
+	g.failedSegmentsMx.Unlock()
+}
+func (g *Grabber) Health() float64 {
+	g.failedSegmentsMx.Lock()
+	defer g.failedSegmentsMx.Unlock()
+	return 100.0 - ((g.failedSegments / g.segments) * 100.0)
 }

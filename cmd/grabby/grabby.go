@@ -23,8 +23,9 @@ func watchGrabber(g grabber.Grabberer) {
 	for {
 		select {
 		case <-tick.C:
-			log.Printf("Downloading at %v", bytefmt.ByteSize(uint64(g.Strategy().DownloadRate())))
+			log.Printf("Downloading at %v (health %.f%%)", bytefmt.ByteSize(uint64(g.Strategy().DownloadRate())), g.Health())
 		case <-g.PostProcessable():
+			log.Printf("Downloading at %v (health %.f%%)", bytefmt.ByteSize(uint64(g.Strategy().DownloadRate())), g.Health())
 			return
 		}
 	}
